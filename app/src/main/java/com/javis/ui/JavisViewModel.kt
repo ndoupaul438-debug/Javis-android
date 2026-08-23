@@ -4,12 +4,14 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.javis.BuildConfig
+import com.javis.ai.AIBackend
+import com.javis.ai.AnthropicBackend
 import com.javis.ai.LLMPIBackend
 import com.javis.ai.MockBackend
 import com.javis.assistant.ConversationTurn
 import com.javis.assistant.JavisAssistantEngine
 import com.javis.assistant.PendingConfirmation
-import com.javis.commands.JavisCommand
+import com.javis.data.ApiKeyStore
 import com.javis.voice.VoiceEvent
 import com.javis.voice.VoiceManager
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -25,24 +27,29 @@ data class JavisUiState(
     val isOnline: Boolean = true,
     val statusText: String = "Listening...",
     val pendingConfirmation: PendingConfirmation? = null,
-    val lastError: String? = null
+    val lastError: String? = null,
+    val hasApiKey: Boolean = false
 )
 
 class JavisViewModel(application: Application) : AndroidViewModel(application) {
 
-    // Real backend uses LLMPIBackend with BuildConfig values (from local.properties).
-    // Falls back to MockBackend automatically if no endpoint is configured, so the
-    // app is fully usable out of the box for development/demo purposes.
-    private val hasRealEndpoint = BuildConfig.LLMPI_BASE_URL.isNotBlank() &&
-        !BuildConfig.LLMPI_BASE_URL.contains("example.invalid")
+    private val apiKeyStore = ApiKeyStore(application)
 
-    private val onlineBackend = if (hasRealEndpoint) {
-        LLMPIBackend(BuildConfig.LLMPI_BASE_URL, BuildConfig.LLMPI_API_KEY)
-    } else {
-        MockBackend()
+    private fun pickBackend(): AIBackend {
+        val savedKey = apiKeyStore.getApiKey()
+        if (!savedKey.isNullOrBlank()) {
+            return AnthropicBackend(savedKey)
+        }
+        val hasRealEndpoint = BuildConfig.LLMPI_BASE_URL.isNotBlank() &&
+            !BuildConfig.LLMPI_BASE_URL.contains("example.invalid")
+        return if (hasRealEndpoint) {
+            LLMPIBackend(BuildConfig.LLMPI_BASE_URL, BuildConfig.LLMPI_API_KEY)
+        } else {
+            MockBackend()
+        }
     }
 
-    private val engine = JavisAssistantEngine(application, onlineBackend)
+    private var engine = JavisAssistantEngine(application, pickBackend())
 
     private val voiceManager = VoiceManager(application) { event -> handleVoiceEvent(event) }
 
@@ -51,20 +58,52 @@ class JavisViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         refreshOnlineStatus()
+        _uiState.update { it.copy(hasApiKey = !apiKeyStore.getApiKey().isNullOrBlank()) }
         pushJavisGreeting()
     }
 
     private fun pushJavisGreeting() {
+        val greeting = if (_uiState.value.hasApiKey) {
+            "Hi — I'm connected and ready to talk. Ask me anything, or tell me what to do."
+        } else {
+            "I'm running in local mock mode right now. Add your Anthropic API key in " +
+                "settings to talk with me for real."
+        }
         _uiState.update {
-            it.copy(messages = it.messages + ConversationTurn(
-                "javis",
-                "All systems operational. Ask me anything, or try a quick command."
-            ))
+            it.copy(messages = it.messages + ConversationTurn("javis", greeting))
         }
     }
 
     fun refreshOnlineStatus() {
         _uiState.update { it.copy(isOnline = engine.isOnline()) }
+    }
+
+    fun saveApiKey(key: String) {
+        val trimmed = key.trim()
+        if (trimmed.isBlank()) return
+        apiKeyStore.saveApiKey(trimmed)
+        engine = JavisAssistantEngine(getApplication(), pickBackend())
+        _uiState.update {
+            it.copy(
+                hasApiKey = true,
+                messages = it.messages + ConversationTurn(
+                    "javis", "Connected. I can talk properly now — try asking me something."
+                )
+            )
+        }
+    }
+
+    fun clearApiKey() {
+        apiKeyStore.clearApiKey()
+        engine = JavisAssistantEngine(getApplication(), pickBackend())
+        _uiState.update {
+            it.copy(
+                hasApiKey = false,
+                messages = it.messages + ConversationTurn(
+                    "javis", "API key removed. I'm back in local mock mode."
+                )
+            )
+        }
     }
 
     fun sendText(text: String) {
