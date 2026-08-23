@@ -1,0 +1,8 @@
+# Copy this file to "local.properties" (same folder) and fill in real values.
+# local.properties is already gitignored — never commit real keys.
+
+sdk.dir=/path/to/your/Android/sdk
+
+# LLMPI backend configuration
+LLMPI_BASE_URL=https://your-llmpi-endpoint.example.com
+LLMPI_API_KEY=your_api_key_here

@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Needed to reach the LLMPI backend when online -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- Needed for voice input (SpeechRecognizer) -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+    <!-- Needed to launch other installed apps via intents (e.g. "open WhatsApp") -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
+        tools:ignore="QueryAllPackagesPermission" />
+
+    <!-- Needed only if the user opts into local notification-based reminders -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <application
+        android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:theme="@style/Theme.Javis"
+        android:usesCleartextTraffic="false"
+        xmlns:tools="http://schemas.android.com/tools">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:theme="@style/Theme.Javis">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!--
+          AccessibilityService is NOT declared here by default.
+          JAVIS does not use it unless a future capability genuinely requires it.
+          If added, it must:
+            - Be a separate opt-in the user enables manually in Android Settings
+            - Have a clear, visible explanation of what it does and why
+            - Never be silently auto-enabled
+        -->
+
+    </application>
+
+</manifest>

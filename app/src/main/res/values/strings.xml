@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">JAVIS</string>
+    <string name="mic_permission_rationale">JAVIS needs microphone access so you can talk to it instead of typing. Voice is optional — you can always type commands.</string>
+    <string name="notification_permission_rationale">JAVIS can show reminder notifications if you create one. Nothing is scheduled unless you ask for it.</string>
+</resources>
