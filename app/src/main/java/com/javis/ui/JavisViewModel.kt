@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.javis.BuildConfig
 import com.javis.ai.AIBackend
 import com.javis.ai.AnthropicBackend
+import com.javis.ai.GeminiBackend
 import com.javis.ai.LLMPIBackend
 import com.javis.ai.MockBackend
 import com.javis.assistant.ConversationTurn
@@ -36,9 +37,13 @@ class JavisViewModel(application: Application) : AndroidViewModel(application) {
     private val apiKeyStore = ApiKeyStore(application)
 
     private fun pickBackend(): AIBackend {
-        val savedKey = apiKeyStore.getApiKey()
-        if (!savedKey.isNullOrBlank()) {
-            return AnthropicBackend(savedKey)
+        val geminiKey = apiKeyStore.getGeminiKey()
+        if (!geminiKey.isNullOrBlank()) {
+            return GeminiBackend(geminiKey)
+        }
+        val anthropicKey = apiKeyStore.getApiKey()
+        if (!anthropicKey.isNullOrBlank()) {
+            return AnthropicBackend(anthropicKey)
         }
         val hasRealEndpoint = BuildConfig.LLMPI_BASE_URL.isNotBlank() &&
             !BuildConfig.LLMPI_BASE_URL.contains("example.invalid")
@@ -101,6 +106,34 @@ class JavisViewModel(application: Application) : AndroidViewModel(application) {
                 hasApiKey = false,
                 messages = it.messages + ConversationTurn(
                     "javis", "API key removed. I'm back in local mock mode."
+                )
+            )
+        }
+    }
+
+    fun saveGeminiKey(key: String) {
+        val trimmed = key.trim()
+        if (trimmed.isBlank()) return
+        apiKeyStore.saveGeminiKey(trimmed)
+        engine = JavisAssistantEngine(getApplication(), pickBackend())
+        _uiState.update {
+            it.copy(
+                hasApiKey = true,
+                messages = it.messages + ConversationTurn(
+                    "javis", "Connected via Gemini (free). I can talk properly now — try asking me something."
+                )
+            )
+        }
+    }
+
+    fun clearGeminiKey() {
+        apiKeyStore.clearGeminiKey()
+        engine = JavisAssistantEngine(getApplication(), pickBackend())
+        _uiState.update {
+            it.copy(
+                hasApiKey = !apiKeyStore.getApiKey().isNullOrBlank(),
+                messages = it.messages + ConversationTurn(
+                    "javis", "Gemini key removed."
                 )
             )
         }
