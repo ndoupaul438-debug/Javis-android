@@ -61,9 +61,12 @@ class JavisViewModel(application: Application) : AndroidViewModel(application) {
     private val _uiState = MutableStateFlow(JavisUiState())
     val uiState: StateFlow<JavisUiState> = _uiState.asStateFlow()
 
+    private fun anyKeySet(): Boolean =
+        !apiKeyStore.getGeminiKey().isNullOrBlank() || !apiKeyStore.getApiKey().isNullOrBlank()
+
     init {
         refreshOnlineStatus()
-        _uiState.update { it.copy(hasApiKey = !apiKeyStore.getApiKey().isNullOrBlank()) }
+        _uiState.update { it.copy(hasApiKey = anyKeySet()) }
         pushJavisGreeting()
     }
 
@@ -71,8 +74,8 @@ class JavisViewModel(application: Application) : AndroidViewModel(application) {
         val greeting = if (_uiState.value.hasApiKey) {
             "Hi — I'm connected and ready to talk. Ask me anything, or tell me what to do."
         } else {
-            "I'm running in local mock mode right now. Add your Anthropic API key in " +
-                "settings to talk with me for real."
+            "I'm running in local mock mode right now. Add a free Gemini key or a paid " +
+                "Anthropic key in settings to talk with me for real."
         }
         _uiState.update {
             it.copy(messages = it.messages + ConversationTurn("javis", greeting))
@@ -90,7 +93,7 @@ class JavisViewModel(application: Application) : AndroidViewModel(application) {
         engine = JavisAssistantEngine(getApplication(), pickBackend())
         _uiState.update {
             it.copy(
-                hasApiKey = true,
+                hasApiKey = anyKeySet(),
                 messages = it.messages + ConversationTurn(
                     "javis", "Connected. I can talk properly now — try asking me something."
                 )
@@ -103,9 +106,9 @@ class JavisViewModel(application: Application) : AndroidViewModel(application) {
         engine = JavisAssistantEngine(getApplication(), pickBackend())
         _uiState.update {
             it.copy(
-                hasApiKey = false,
+                hasApiKey = anyKeySet(),
                 messages = it.messages + ConversationTurn(
-                    "javis", "API key removed. I'm back in local mock mode."
+                    "javis", "Anthropic key removed."
                 )
             )
         }
@@ -118,7 +121,7 @@ class JavisViewModel(application: Application) : AndroidViewModel(application) {
         engine = JavisAssistantEngine(getApplication(), pickBackend())
         _uiState.update {
             it.copy(
-                hasApiKey = true,
+                hasApiKey = anyKeySet(),
                 messages = it.messages + ConversationTurn(
                     "javis", "Connected via Gemini (free). I can talk properly now — try asking me something."
                 )
@@ -131,7 +134,7 @@ class JavisViewModel(application: Application) : AndroidViewModel(application) {
         engine = JavisAssistantEngine(getApplication(), pickBackend())
         _uiState.update {
             it.copy(
-                hasApiKey = !apiKeyStore.getApiKey().isNullOrBlank(),
+                hasApiKey = anyKeySet(),
                 messages = it.messages + ConversationTurn(
                     "javis", "Gemini key removed."
                 )
