@@ -1,14 +1,19 @@
 package com.javis
 
 import android.Manifest
+import android.content.Context
 import android.content.pm.PackageManager
+import android.os.BatteryManager
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
+import android.os.StatFs
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -20,6 +25,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -28,6 +34,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.javis.assistant.ConversationTurn
 import com.javis.ui.JavisUiState
 import com.javis.ui.JavisViewModel
+import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
 
@@ -37,7 +44,6 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (granted) viewModel.startListening()
-        // If denied, the UI simply keeps working with text input — no crash, no nagging.
     }
 
     private val notificationPermissionLauncher = registerForActivityResult(
@@ -90,6 +96,7 @@ private val JavisBg = Color(0xFF050A12)
 private val JavisPanel = Color(0xFF0A1420)
 private val JavisTextDim = Color(0xFF6F93AB)
 private val JavisGreen = Color(0xFF33E08A)
+private val JavisRed = Color(0xFFFF6B6B)
 
 @Composable
 fun JavisTheme(content: @Composable () -> Unit) {
@@ -103,13 +110,47 @@ fun JavisTheme(content: @Composable () -> Unit) {
     MaterialTheme(colorScheme = colorScheme, content = content)
 }
 
+// ---------- Real device stats (no fabricated numbers) ----------
+
+private data class DeviceStats(
+    val batteryPercent: Int?,
+    val storageUsedPercent: Int?,
+    val isOnline: Boolean
+)
+
+private fun readDeviceStats(context: Context, isOnline: Boolean): DeviceStats {
+    val battery = try {
+        val bm = context.getSystemService(Context.BATTERY_SERVICE) as? BatteryManager
+        bm?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)?.takeIf { it in 0..100 }
+    } catch (e: Exception) { null }
+
+    val storage = try {
+        val stat = StatFs(Environment.getDataDirectory().path)
+        val total = stat.blockCountLong * stat.blockSizeLong
+        val free = stat.availableBlocksLong * stat.blockSizeLong
+        if (total > 0) (((total - free) * 100) / total).toInt() else null
+    } catch (e: Exception) { null }
+
+    return DeviceStats(battery, storage, isOnline)
+}
+
 // ---------- Top-level screen ----------
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun JavisApp(viewModel: JavisViewModel, onRequestMic: () -> Unit) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val context = LocalContext.current
     var inputText by remember { mutableStateOf("") }
+    var showSettings by remember { mutableStateOf(false) }
+    var deviceStats by remember { mutableStateOf(readDeviceStats(context, state.isOnline)) }
+
+    LaunchedEffect(state.isOnline) {
+        while (true) {
+            deviceStats = readDeviceStats(context, state.isOnline)
+            delay(15_000)
+        }
+    }
 
     Scaffold(containerColor = JavisBg) { padding ->
         Column(
@@ -118,10 +159,22 @@ fun JavisApp(viewModel: JavisViewModel, onRequestMic: () -> Unit) {
                 .padding(padding)
                 .padding(16.dp)
         ) {
-            HeaderBar(state)
-            Spacer(Modifier.height(16.dp))
+            HeaderBar(state, onSettingsClick = { showSettings = true })
+            Spacer(Modifier.height(20.dp))
+
+            AiCoreVisual(isThinking = state.isThinking, isListening = state.isListening)
+            Spacer(Modifier.height(8.dp))
             StatusIndicator(state)
             Spacer(Modifier.height(16.dp))
+
+            DeviceStatusCard(deviceStats)
+            Spacer(Modifier.height(12.dp))
+
+            QuickToolsRow(onToolTap = { command -> viewModel.sendText(command) })
+            Spacer(Modifier.height(12.dp))
+
+            Text("JAVIS CHAT", color = JavisCyan, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(8.dp))
 
             ConversationList(
                 messages = state.messages,
@@ -131,7 +184,7 @@ fun JavisApp(viewModel: JavisViewModel, onRequestMic: () -> Unit) {
             if (state.lastError != null) {
                 Text(
                     state.lastError ?: "",
-                    color = Color(0xFFFF6B6B),
+                    color = JavisRed,
                     fontSize = 12.sp,
                     modifier = Modifier.padding(vertical = 4.dp)
                 )
@@ -147,6 +200,14 @@ fun JavisApp(viewModel: JavisViewModel, onRequestMic: () -> Unit) {
                 isListening = state.isListening,
                 onMicClick = onRequestMic
             )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "Tap the mic to talk, or type a command",
+                color = JavisTextDim,
+                fontSize = 11.sp,
+                modifier = Modifier.fillMaxWidth(),
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+            )
         }
     }
 
@@ -157,10 +218,25 @@ fun JavisApp(viewModel: JavisViewModel, onRequestMic: () -> Unit) {
             onCancel = { viewModel.cancelPendingAction() }
         )
     }
+
+    if (showSettings) {
+        SettingsDialog(
+            hasApiKey = state.hasApiKey,
+            onSave = { key ->
+                viewModel.saveApiKey(key)
+                showSettings = false
+            },
+            onClear = {
+                viewModel.clearApiKey()
+                showSettings = false
+            },
+            onDismiss = { showSettings = false }
+        )
+    }
 }
 
 @Composable
-private fun HeaderBar(state: JavisUiState) {
+private fun HeaderBar(state: JavisUiState, onSettingsClick: () -> Unit) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -175,15 +251,54 @@ private fun HeaderBar(state: JavisUiState) {
                 modifier = Modifier
                     .size(8.dp)
                     .clip(CircleShape)
-                    .background(if (state.isOnline) JavisGreen else Color(0xFFFF6B6B))
+                    .background(if (state.isOnline) JavisGreen else JavisRed)
             )
             Spacer(Modifier.width(6.dp))
             Text(
                 if (state.isOnline) "ONLINE" else "OFFLINE",
-                color = if (state.isOnline) JavisGreen else Color(0xFFFF6B6B),
+                color = if (state.isOnline) JavisGreen else JavisRed,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.SemiBold
             )
+            Spacer(Modifier.width(12.dp))
+            IconButton(onClick = onSettingsClick) {
+                Text("⚙", color = JavisTextDim, fontSize = 18.sp)
+            }
+        }
+    }
+}
+
+@Composable
+private fun AiCoreVisual(isThinking: Boolean, isListening: Boolean) {
+    val ringColor = when {
+        isThinking -> JavisCyan
+        isListening -> JavisGreen
+        else -> JavisCyan.copy(alpha = 0.6f)
+    }
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(160.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Box(
+            modifier = Modifier
+                .size(150.dp)
+                .clip(CircleShape)
+                .border(1.dp, ringColor.copy(alpha = 0.4f), CircleShape)
+        )
+        Box(
+            modifier = Modifier
+                .size(110.dp)
+                .clip(CircleShape)
+                .background(JavisPanel)
+                .border(2.dp, ringColor, CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("JAVIS", color = ringColor, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                Text("AI CORE", color = JavisTextDim, fontSize = 9.sp)
+            }
         }
     }
 }
@@ -195,7 +310,81 @@ private fun StatusIndicator(state: JavisUiState) {
         state.isListening -> "Listening..."
         else -> state.statusText
     }
-    Text(label, color = JavisCyan, fontSize = 13.sp, modifier = Modifier.fillMaxWidth())
+    Text(
+        label,
+        color = JavisCyan,
+        fontSize = 13.sp,
+        modifier = Modifier.fillMaxWidth(),
+        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+    )
+}
+
+@Composable
+private fun DeviceStatusCard(stats: DeviceStats) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(JavisPanel)
+            .border(1.dp, Color(0xFF163049), RoundedCornerShape(10.dp))
+            .padding(14.dp)
+    ) {
+        Text("DEVICE STATUS", color = JavisCyan, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(10.dp))
+        StatRow("Battery", stats.batteryPercent?.let { "$it%" } ?: "—")
+        StatRow("Storage used", stats.storageUsedPercent?.let { "$it%" } ?: "—")
+        StatRow("Network", if (stats.isOnline) "Connected" else "Offline")
+    }
+}
+
+@Composable
+private fun StatRow(label: String, value: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 3.dp),
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(label, color = JavisTextDim, fontSize = 13.sp)
+        Text(value, color = Color(0xFFE8F6FF), fontSize = 13.sp, fontWeight = FontWeight.Medium)
+    }
+}
+
+private data class QuickTool(val label: String, val command: String)
+
+private val QUICK_TOOLS = listOf(
+    QuickTool("Time", "what time is it"),
+    QuickTool("Calculator", "calculate "),
+    QuickTool("Note", "read my note"),
+    QuickTool("Wi-Fi", "open wifi settings"),
+)
+
+@Composable
+private fun QuickToolsRow(onToolTap: (String) -> Unit) {
+    Column {
+        Text("QUICK TOOLS", color = JavisCyan, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(8.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            QUICK_TOOLS.forEach { tool ->
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(JavisPanel)
+                        .border(1.dp, Color(0xFF163049), RoundedCornerShape(8.dp))
+                        .padding(vertical = 10.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    androidx.compose.material3.TextButton(onClick = { onToolTap(tool.command) }) {
+                        Text(tool.label, color = JavisTextDim, fontSize = 11.sp)
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Composable
@@ -279,8 +468,7 @@ private fun IconButtonCircle(onClick: () -> Unit, background: Color, content: @C
         modifier = Modifier
             .size(44.dp)
             .clip(CircleShape)
-            .background(background)
-            .then(Modifier),
+            .background(background),
         contentAlignment = Alignment.Center
     ) {
         androidx.compose.material3.IconButton(onClick = onClick) { content() }
@@ -298,6 +486,66 @@ private fun ConfirmationDialog(message: String, onConfirm: () -> Unit, onCancel:
         },
         dismissButton = {
             TextButton(onClick = onCancel) { Text("Cancel") }
+        },
+        containerColor = JavisPanel,
+        titleContentColor = Color(0xFFE8F6FF),
+        textContentColor = Color(0xFFE8F6FF),
+    )
+}
+
+@Composable
+private fun SettingsDialog(
+    hasApiKey: Boolean,
+    onSave: (String) -> Unit,
+    onClear: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    var keyInput by remember { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("JAVIS Settings") },
+        text = {
+            Column {
+                Text(
+                    if (hasApiKey) {
+                        "A key is currently saved. Enter a new one to replace it, or clear it below."
+                    } else {
+                        "Enter your Anthropic API key so JAVIS can talk to you for real, " +
+                            "using the same approach as the JARVIS web dashboard. Get a key " +
+                            "at console.anthropic.com."
+                    },
+                    color = JavisTextDim,
+                    fontSize = 13.sp
+                )
+                Spacer(Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = keyInput,
+                    onValueChange = { keyInput = it },
+                    placeholder = { Text("sk-ant-...", color = JavisTextDim) },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = JavisCyan,
+                        unfocusedBorderColor = Color(0xFF163049),
+                        focusedTextColor = Color(0xFFE8F6FF),
+                        unfocusedTextColor = Color(0xFFE8F6FF),
+                    )
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { if (keyInput.isNotBlank()) onSave(keyInput) },
+                enabled = keyInput.isNotBlank()
+            ) { Text("Save", color = JavisCyan) }
+        },
+        dismissButton = {
+            Row {
+                if (hasApiKey) {
+                    TextButton(onClick = onClear) { Text("Clear key", color = JavisRed) }
+                }
+                TextButton(onClick = onDismiss) { Text("Cancel") }
+            }
         },
         containerColor = JavisPanel,
         titleContentColor = Color(0xFFE8F6FF),
