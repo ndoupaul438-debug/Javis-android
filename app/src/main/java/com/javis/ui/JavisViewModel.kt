@@ -30,7 +30,8 @@ data class JavisUiState(
     val statusText: String = "Listening...",
     val pendingConfirmation: PendingConfirmation? = null,
     val lastError: String? = null,
-    val hasApiKey: Boolean = false
+    val hasApiKey: Boolean = false,
+    val wakeWordEnabled: Boolean = false
 )
 
 class JavisViewModel(application: Application) : AndroidViewModel(application) {
@@ -62,6 +63,7 @@ class JavisViewModel(application: Application) : AndroidViewModel(application) {
     private var engine = JavisAssistantEngine(application, pickBackend())
 
     private val voiceManager = VoiceManager(application) { event -> handleVoiceEvent(event) }
+    private var wakeWordWasActiveBeforeCommand = false
 
     private val _uiState = MutableStateFlow(JavisUiState())
     val uiState: StateFlow<JavisUiState> = _uiState.asStateFlow()
@@ -228,6 +230,10 @@ class JavisViewModel(application: Application) : AndroidViewModel(application) {
             _uiState.update { it.copy(lastError = "Voice recognition isn't available on this device.") }
             return
         }
+        if (voiceManager.isWakeWordActive()) {
+            wakeWordWasActiveBeforeCommand = true
+            voiceManager.stopWakeWordListening(keepFlag = true)
+        }
         voiceManager.startListening()
     }
 
@@ -235,13 +241,49 @@ class JavisViewModel(application: Application) : AndroidViewModel(application) {
         voiceManager.stopListening()
     }
 
+    fun toggleWakeWord() {
+        if (voiceManager.isWakeWordActive()) {
+            voiceManager.stopWakeWordListening()
+            _uiState.update { it.copy(wakeWordEnabled = false) }
+        } else {
+            if (!voiceManager.isRecognitionAvailable()) {
+                _uiState.update { it.copy(lastError = "Voice recognition isn't available on this device.") }
+                return
+            }
+            voiceManager.startWakeWordListening()
+            _uiState.update {
+                it.copy(
+                    wakeWordEnabled = true,
+                    messages = it.messages + ConversationTurn(
+                        "javis", "Wake word on — just say \"Javis\" any time while the app is open."
+                    )
+                )
+            }
+        }
+    }
+
+    private fun resumeWakeWordIfNeeded() {
+        if (wakeWordWasActiveBeforeCommand) {
+            wakeWordWasActiveBeforeCommand = false
+            voiceManager.startWakeWordListening()
+        }
+    }
+
     private fun handleVoiceEvent(event: VoiceEvent) {
         when (event) {
             is VoiceEvent.ListeningStarted -> _uiState.update { it.copy(isListening = true, statusText = "Listening...") }
-            is VoiceEvent.ListeningEnded -> _uiState.update { it.copy(isListening = false) }
+            is VoiceEvent.ListeningEnded -> {
+                _uiState.update { it.copy(isListening = false) }
+                resumeWakeWordIfNeeded()
+            }
             is VoiceEvent.RecognizedText -> sendText(event.text)
-            is VoiceEvent.Error -> _uiState.update {
-                it.copy(isListening = false, lastError = event.message)
+            is VoiceEvent.Error -> {
+                _uiState.update { it.copy(isListening = false, lastError = event.message) }
+                resumeWakeWordIfNeeded()
+            }
+            is VoiceEvent.WakeWordDetected -> {
+                wakeWordWasActiveBeforeCommand = true
+                voiceManager.startListening()
             }
         }
     }

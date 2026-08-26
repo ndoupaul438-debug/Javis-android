@@ -66,7 +66,8 @@ class MainActivity : ComponentActivity() {
             JavisTheme {
                 JavisApp(
                     viewModel = viewModel,
-                    onRequestMic = { requestMicAndListen() }
+                    onRequestMic = { requestMicAndListen() },
+                    onToggleWakeWord = { requestMicAndToggleWakeWord() }
                 )
             }
         }
@@ -83,13 +84,28 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private val wakeWordPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) viewModel.toggleWakeWord()
+    }
+
+    private fun requestMicAndToggleWakeWord() {
+        val granted = ContextCompat.checkSelfPermission(
+            this, Manifest.permission.RECORD_AUDIO
+        ) == PackageManager.PERMISSION_GRANTED
+        if (granted) {
+            viewModel.toggleWakeWord()
+        } else {
+            wakeWordPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+
     override fun onResume() {
         super.onResume()
         viewModel.refreshOnlineStatus()
     }
 }
-
-// ---------- Theme ----------
 
 private val JavisCyan = Color(0xFF2FD8FF)
 private val JavisBg = Color(0xFF050A12)
@@ -109,8 +125,6 @@ fun JavisTheme(content: @Composable () -> Unit) {
     )
     MaterialTheme(colorScheme = colorScheme, content = content)
 }
-
-// ---------- Real device stats (no fabricated numbers) ----------
 
 private data class DeviceStats(
     val batteryPercent: Int?,
@@ -134,18 +148,15 @@ private fun readDeviceStats(context: Context, isOnline: Boolean): DeviceStats {
     return DeviceStats(battery, storage, isOnline)
 }
 
-// ---------- Top-level screen ----------
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun JavisApp(viewModel: JavisViewModel, onRequestMic: () -> Unit) {
+fun JavisApp(viewModel: JavisViewModel, onRequestMic: () -> Unit, onToggleWakeWord: () -> Unit) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var inputText by remember { mutableStateOf("") }
     var showSettings by remember { mutableStateOf(false) }
     var deviceStats by remember { mutableStateOf(readDeviceStats(context, state.isOnline)) }
 
-    // Refresh real device stats periodically — no fake/simulated numbers.
     LaunchedEffect(state.isOnline) {
         while (true) {
             deviceStats = readDeviceStats(context, state.isOnline)
@@ -202,12 +213,9 @@ fun JavisApp(viewModel: JavisViewModel, onRequestMic: () -> Unit) {
                 onMicClick = onRequestMic
             )
             Spacer(Modifier.height(6.dp))
-            Text(
-                "Tap the mic to talk, or type a command",
-                color = JavisTextDim,
-                fontSize = 11.sp,
-                modifier = Modifier.fillMaxWidth(),
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+            WakeWordToggle(
+                enabled = state.wakeWordEnabled,
+                onToggle = onToggleWakeWord
             )
         }
     }
@@ -325,6 +333,31 @@ private fun StatusIndicator(state: JavisUiState) {
         modifier = Modifier.fillMaxWidth(),
         textAlign = androidx.compose.ui.text.style.TextAlign.Center
     )
+}
+
+@Composable
+private fun WakeWordToggle(enabled: Boolean, onToggle: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        androidx.compose.material3.TextButton(onClick = onToggle) {
+            Box(
+                modifier = Modifier
+                    .size(6.dp)
+                    .clip(CircleShape)
+                    .background(if (enabled) JavisGreen else JavisTextDim)
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
+                if (enabled) "Wake word on — say \"Javis\" to talk"
+                else "Tap the mic to talk, or say \"Javis\" to wake me",
+                color = if (enabled) JavisGreen else JavisTextDim,
+                fontSize = 11.sp
+            )
+        }
+    }
 }
 
 @Composable
