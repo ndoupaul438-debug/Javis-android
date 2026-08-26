@@ -7,6 +7,7 @@ import com.javis.BuildConfig
 import com.javis.ai.AIBackend
 import com.javis.ai.AnthropicBackend
 import com.javis.ai.GeminiBackend
+import com.javis.ai.GroqBackend
 import com.javis.ai.LLMPIBackend
 import com.javis.ai.MockBackend
 import com.javis.assistant.ConversationTurn
@@ -37,6 +38,10 @@ class JavisViewModel(application: Application) : AndroidViewModel(application) {
     private val apiKeyStore = ApiKeyStore(application)
 
     private fun pickBackend(): AIBackend {
+        val groqKey = apiKeyStore.getGroqKey()
+        if (!groqKey.isNullOrBlank()) {
+            return GroqBackend(groqKey)
+        }
         val geminiKey = apiKeyStore.getGeminiKey()
         if (!geminiKey.isNullOrBlank()) {
             return GeminiBackend(geminiKey)
@@ -62,7 +67,9 @@ class JavisViewModel(application: Application) : AndroidViewModel(application) {
     val uiState: StateFlow<JavisUiState> = _uiState.asStateFlow()
 
     private fun anyKeySet(): Boolean =
-        !apiKeyStore.getGeminiKey().isNullOrBlank() || !apiKeyStore.getApiKey().isNullOrBlank()
+        !apiKeyStore.getGroqKey().isNullOrBlank() ||
+        !apiKeyStore.getGeminiKey().isNullOrBlank() ||
+        !apiKeyStore.getApiKey().isNullOrBlank()
 
     init {
         refreshOnlineStatus()
@@ -137,6 +144,34 @@ class JavisViewModel(application: Application) : AndroidViewModel(application) {
                 hasApiKey = anyKeySet(),
                 messages = it.messages + ConversationTurn(
                     "javis", "Gemini key removed."
+                )
+            )
+        }
+    }
+
+    fun saveGroqKey(key: String) {
+        val trimmed = key.trim()
+        if (trimmed.isBlank()) return
+        apiKeyStore.saveGroqKey(trimmed)
+        engine = JavisAssistantEngine(getApplication(), pickBackend())
+        _uiState.update {
+            it.copy(
+                hasApiKey = anyKeySet(),
+                messages = it.messages + ConversationTurn(
+                    "javis", "Connected via Groq (free). I can talk properly now — try asking me something."
+                )
+            )
+        }
+    }
+
+    fun clearGroqKey() {
+        apiKeyStore.clearGroqKey()
+        engine = JavisAssistantEngine(getApplication(), pickBackend())
+        _uiState.update {
+            it.copy(
+                hasApiKey = anyKeySet(),
+                messages = it.messages + ConversationTurn(
+                    "javis", "Groq key removed."
                 )
             )
         }

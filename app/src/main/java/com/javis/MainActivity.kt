@@ -145,6 +145,7 @@ fun JavisApp(viewModel: JavisViewModel, onRequestMic: () -> Unit) {
     var showSettings by remember { mutableStateOf(false) }
     var deviceStats by remember { mutableStateOf(readDeviceStats(context, state.isOnline)) }
 
+    // Refresh real device stats periodically — no fake/simulated numbers.
     LaunchedEffect(state.isOnline) {
         while (true) {
             deviceStats = readDeviceStats(context, state.isOnline)
@@ -222,14 +223,21 @@ fun JavisApp(viewModel: JavisViewModel, onRequestMic: () -> Unit) {
     if (showSettings) {
         SettingsDialog(
             hasApiKey = state.hasApiKey,
-            onSave = { key ->
+            onSaveGroq = { key ->
+                viewModel.saveGroqKey(key)
+                showSettings = false
+            },
+            onClearGroq = { viewModel.clearGroqKey() },
+            onSaveGemini = { key ->
+                viewModel.saveGeminiKey(key)
+                showSettings = false
+            },
+            onClearGemini = { viewModel.clearGeminiKey() },
+            onSaveAnthropic = { key ->
                 viewModel.saveApiKey(key)
                 showSettings = false
             },
-            onClear = {
-                viewModel.clearApiKey()
-                showSettings = false
-            },
+            onClearAnthropic = { viewModel.clearApiKey() },
             onDismiss = { showSettings = false }
         )
     }
@@ -474,7 +482,6 @@ private fun IconButtonCircle(onClick: () -> Unit, background: Color, content: @C
         androidx.compose.material3.IconButton(onClick = onClick) { content() }
     }
 }
-
 @Composable
 private fun ConfirmationDialog(message: String, onConfirm: () -> Unit, onCancel: () -> Unit) {
     AlertDialog(
@@ -496,11 +503,17 @@ private fun ConfirmationDialog(message: String, onConfirm: () -> Unit, onCancel:
 @Composable
 private fun SettingsDialog(
     hasApiKey: Boolean,
-    onSave: (String) -> Unit,
-    onClear: () -> Unit,
+    onSaveGroq: (String) -> Unit,
+    onClearGroq: () -> Unit,
+    onSaveGemini: (String) -> Unit,
+    onClearGemini: () -> Unit,
+    onSaveAnthropic: (String) -> Unit,
+    onClearAnthropic: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    var keyInput by remember { mutableStateOf("") }
+    var groqInput by remember { mutableStateOf("") }
+    var geminiInput by remember { mutableStateOf("") }
+    var anthropicInput by remember { mutableStateOf("") }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -508,20 +521,86 @@ private fun SettingsDialog(
         text = {
             Column {
                 Text(
-                    if (hasApiKey) {
-                        "A key is currently saved. Enter a new one to replace it, or clear it below."
-                    } else {
-                        "Enter your Anthropic API key so JAVIS can talk to you for real, " +
-                            "using the same approach as the JARVIS web dashboard. Get a key " +
-                            "at console.anthropic.com."
-                    },
-                    color = JavisTextDim,
-                    fontSize = 13.sp
+                    "Groq (free, no card needed)",
+                    color = JavisGreen,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold
                 )
-                Spacer(Modifier.height(12.dp))
+                Text(
+                    "Get a free key at console.groq.com",
+                    color = JavisTextDim,
+                    fontSize = 11.sp
+                )
+                Spacer(Modifier.height(6.dp))
                 OutlinedTextField(
-                    value = keyInput,
-                    onValueChange = { keyInput = it },
+                    value = groqInput,
+                    onValueChange = { groqInput = it },
+                    placeholder = { Text("gsk_...", color = JavisTextDim) },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = JavisGreen,
+                        unfocusedBorderColor = Color(0xFF163049),
+                        focusedTextColor = Color(0xFFE8F6FF),
+                        unfocusedTextColor = Color(0xFFE8F6FF),
+                    )
+                )
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TextButton(onClick = onClearGroq) { Text("Clear", color = JavisRed, fontSize = 12.sp) }
+                    TextButton(
+                        onClick = { if (groqInput.isNotBlank()) onSaveGroq(groqInput) },
+                        enabled = groqInput.isNotBlank()
+                    ) { Text("Save", color = JavisGreen, fontSize = 12.sp) }
+                }
+
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    "Gemini (free, may be region-locked)",
+                    color = JavisCyan,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    "Get a free key at aistudio.google.com/apikey",
+                    color = JavisTextDim,
+                    fontSize = 11.sp
+                )
+                Spacer(Modifier.height(6.dp))
+                OutlinedTextField(
+                    value = geminiInput,
+                    onValueChange = { geminiInput = it },
+                    placeholder = { Text("Paste Gemini key", color = JavisTextDim) },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = JavisCyan,
+                        unfocusedBorderColor = Color(0xFF163049),
+                        focusedTextColor = Color(0xFFE8F6FF),
+                        unfocusedTextColor = Color(0xFFE8F6FF),
+                    )
+                )
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TextButton(onClick = onClearGemini) { Text("Clear", color = JavisRed, fontSize = 12.sp) }
+                    TextButton(
+                        onClick = { if (geminiInput.isNotBlank()) onSaveGemini(geminiInput) },
+                        enabled = geminiInput.isNotBlank()
+                    ) { Text("Save", color = JavisCyan, fontSize = 12.sp) }
+                }
+
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    "Anthropic (paid, pay-per-use)",
+                    color = JavisTextDim,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    "Get a key at console.anthropic.com",
+                    color = JavisTextDim,
+                    fontSize = 11.sp
+                )
+                Spacer(Modifier.height(6.dp))
+                OutlinedTextField(
+                    value = anthropicInput,
+                    onValueChange = { anthropicInput = it },
                     placeholder = { Text("sk-ant-...", color = JavisTextDim) },
                     singleLine = true,
                     colors = OutlinedTextFieldDefaults.colors(
@@ -531,21 +610,24 @@ private fun SettingsDialog(
                         unfocusedTextColor = Color(0xFFE8F6FF),
                     )
                 )
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TextButton(onClick = onClearAnthropic) { Text("Clear", color = JavisRed, fontSize = 12.sp) }
+                    TextButton(
+                        onClick = { if (anthropicInput.isNotBlank()) onSaveAnthropic(anthropicInput) },
+                        enabled = anthropicInput.isNotBlank()
+                    ) { Text("Save", color = JavisTextDim, fontSize = 12.sp) }
+                }
+
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Priority if more than one is set: Groq, then Gemini, then Anthropic.",
+                    color = JavisTextDim,
+                    fontSize = 10.sp
+                )
             }
         },
         confirmButton = {
-            TextButton(
-                onClick = { if (keyInput.isNotBlank()) onSave(keyInput) },
-                enabled = keyInput.isNotBlank()
-            ) { Text("Save", color = JavisCyan) }
-        },
-        dismissButton = {
-            Row {
-                if (hasApiKey) {
-                    TextButton(onClick = onClear) { Text("Clear key", color = JavisRed) }
-                }
-                TextButton(onClick = onDismiss) { Text("Cancel") }
-            }
+            TextButton(onClick = onDismiss) { Text("Done", color = JavisCyan) }
         },
         containerColor = JavisPanel,
         titleContentColor = Color(0xFFE8F6FF),

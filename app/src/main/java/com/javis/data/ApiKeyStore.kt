@@ -38,8 +38,19 @@ class ApiKeyStore(context: Context) {
         prefs.edit().remove(KEY_GEMINI_API_KEY).apply()
     }
 
+    fun getGroqKey(): String? = prefs.getString(KEY_GROQ_API_KEY, null)
+
+    fun saveGroqKey(key: String) {
+        prefs.edit().putString(KEY_GROQ_API_KEY, key.trim()).apply()
+    }
+
+    fun clearGroqKey() {
+        prefs.edit().remove(KEY_GROQ_API_KEY).apply()
+    }
+
     companion object {
         private const val KEY_ANTHROPIC_API_KEY = "anthropic_api_key"
         private const val KEY_GEMINI_API_KEY = "gemini_api_key"
+        private const val KEY_GROQ_API_KEY = "groq_api_key"
     }
 }
