@@ -12,6 +12,14 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -25,6 +33,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -286,26 +296,82 @@ private fun HeaderBar(state: JavisUiState, onSettingsClick: () -> Unit) {
 
 @Composable
 private fun AiCoreVisual(isThinking: Boolean, isListening: Boolean) {
-    val ringColor = when {
-        isThinking -> JavisCyan
-        isListening -> JavisGreen
-        else -> JavisCyan.copy(alpha = 0.6f)
-    }
+    val ringColor by animateColorAsState(
+        targetValue = when {
+            isThinking -> JavisCyan
+            isListening -> JavisGreen
+            else -> JavisCyan.copy(alpha = 0.6f)
+        },
+        animationSpec = tween(400),
+        label = "ringColor"
+    )
+
+    val infiniteTransition = rememberInfiniteTransition(label = "aiCore")
+
+    val rotation by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(6000, easing = LinearEasing)
+        ),
+        label = "rotation"
+    )
+
+    val pulse by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(900, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "pulse"
+    )
+
+    val activeAmplitude = if (isThinking || isListening) 1f else 0.15f
+    val innerScale = 1f + (pulse * 0.06f * activeAmplitude)
+    val glowAlpha = 0.12f + (pulse * 0.18f * activeAmplitude)
+
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .height(160.dp),
         contentAlignment = Alignment.Center
     ) {
-        Box(
+        Canvas(
             modifier = Modifier
                 .size(150.dp)
+                .graphicsLayer { rotationZ = rotation }
+        ) {
+            val segments = 24
+            val gapDegrees = 5f
+            val segmentDegrees = (360f / segments) - gapDegrees
+            for (i in 0 until segments) {
+                val startAngle = i * (360f / segments)
+                val alpha = 0.25f + (i % 4) * 0.12f
+                drawArc(
+                    color = ringColor.copy(alpha = alpha),
+                    startAngle = startAngle,
+                    sweepAngle = segmentDegrees,
+                    useCenter = false,
+                    style = Stroke(width = 3.dp.toPx())
+                )
+            }
+        }
+
+        Box(
+            modifier = Modifier
+                .size(130.dp)
                 .clip(CircleShape)
-                .border(1.dp, ringColor.copy(alpha = 0.4f), CircleShape)
+                .background(ringColor.copy(alpha = glowAlpha))
         )
+
         Box(
             modifier = Modifier
                 .size(110.dp)
+                .graphicsLayer {
+                    scaleX = innerScale
+                    scaleY = innerScale
+                }
                 .clip(CircleShape)
                 .background(JavisPanel)
                 .border(2.dp, ringColor, CircleShape),
