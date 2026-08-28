@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.javis.assistant.ConversationTurn
+import com.javis.service.WakeWordService
 import com.javis.ui.JavisUiState
 import com.javis.ui.JavisViewModel
 import kotlinx.coroutines.delay
@@ -78,7 +79,8 @@ class MainActivity : ComponentActivity() {
                 JavisApp(
                     viewModel = viewModel,
                     onRequestMic = { requestMicAndListen() },
-                    onToggleWakeWord = { requestMicAndToggleWakeWord() }
+                    onToggleWakeWord = { requestMicAndToggleWakeWord() },
+                    onToggleBackgroundMode = { turnOn -> handleBackgroundModeToggle(turnOn) }
                 )
             }
         }
@@ -109,6 +111,29 @@ class MainActivity : ComponentActivity() {
             viewModel.toggleWakeWord()
         } else {
             wakeWordPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+
+    // ---- Background listening (foreground service) ----
+
+    private val backgroundMicPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) WakeWordService.start(this)
+    }
+
+    private fun handleBackgroundModeToggle(turnOn: Boolean) {
+        if (turnOn) {
+            val granted = ContextCompat.checkSelfPermission(
+                this, Manifest.permission.RECORD_AUDIO
+            ) == PackageManager.PERMISSION_GRANTED
+            if (granted) {
+                WakeWordService.start(this)
+            } else {
+                backgroundMicPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            }
+        } else {
+            WakeWordService.stop(this)
         }
     }
 
@@ -161,11 +186,17 @@ private fun readDeviceStats(context: Context, isOnline: Boolean): DeviceStats {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun JavisApp(viewModel: JavisViewModel, onRequestMic: () -> Unit, onToggleWakeWord: () -> Unit) {
+fun JavisApp(
+    viewModel: JavisViewModel,
+    onRequestMic: () -> Unit,
+    onToggleWakeWord: () -> Unit,
+    onToggleBackgroundMode: (Boolean) -> Unit
+) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var inputText by remember { mutableStateOf("") }
     var showSettings by remember { mutableStateOf(false) }
+    var backgroundModeOn by remember { mutableStateOf(false) }
     var deviceStats by remember { mutableStateOf(readDeviceStats(context, state.isOnline)) }
 
     LaunchedEffect(state.isOnline) {
@@ -227,6 +258,14 @@ fun JavisApp(viewModel: JavisViewModel, onRequestMic: () -> Unit, onToggleWakeWo
             WakeWordToggle(
                 enabled = state.wakeWordEnabled,
                 onToggle = onToggleWakeWord
+            )
+            Spacer(Modifier.height(4.dp))
+            BackgroundModeToggle(
+                enabled = backgroundModeOn,
+                onToggle = {
+                    backgroundModeOn = !backgroundModeOn
+                    onToggleBackgroundMode(backgroundModeOn)
+                }
             )
         }
     }
@@ -422,6 +461,31 @@ private fun WakeWordToggle(enabled: Boolean, onToggle: () -> Unit) {
                 else "Tap the mic to talk, or say \"Javis\" to wake me",
                 color = if (enabled) JavisGreen else JavisTextDim,
                 fontSize = 11.sp
+            )
+        }
+    }
+}
+
+@Composable
+private fun BackgroundModeToggle(enabled: Boolean, onToggle: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        androidx.compose.material3.TextButton(onClick = onToggle) {
+            Box(
+                modifier = Modifier
+                    .size(6.dp)
+                    .clip(CircleShape)
+                    .background(if (enabled) JavisCyan else JavisTextDim)
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
+                if (enabled) "Background listening ON — works even when you leave the app"
+                else "Enable background listening (uses more battery, shows a notification)",
+                color = if (enabled) JavisCyan else JavisTextDim,
+                fontSize = 10.sp
             )
         }
     }
