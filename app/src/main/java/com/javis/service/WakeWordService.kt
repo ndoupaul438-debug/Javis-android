@@ -54,6 +54,7 @@ class WakeWordService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (!running) {
             running = true
+            WakeWordServiceState.setRunning(true)
             startForeground(NOTIFICATION_ID, buildNotification("Listening for \"Hey Javis\"..."))
             runWakeRecognizer()
         }
@@ -64,6 +65,7 @@ class WakeWordService : Service() {
 
     override fun onDestroy() {
         running = false
+        WakeWordServiceState.setRunning(false)
         wakeRecognizer?.destroy()
         commandRecognizer?.destroy()
         tts?.stop()
@@ -91,6 +93,7 @@ class WakeWordService : Service() {
     private fun runWakeRecognizer() {
         if (!running) return
         if (!SpeechRecognizer.isRecognitionAvailable(this)) return
+        WakeWordServiceState.setStatus(ListeningStatus.LISTENING_FOR_WAKE)
 
         wakeRecognizer?.destroy()
         wakeRecognizer = SpeechRecognizer.createSpeechRecognizer(this).apply {
@@ -136,6 +139,7 @@ class WakeWordService : Service() {
         if (heard) {
             wakeRecognizer?.destroy()
             wakeRecognizer = null
+            WakeWordServiceState.setStatus(ListeningStatus.LISTENING_FOR_COMMAND)
             updateNotification("Listening for your command...")
             captureCommand()
         } else if (restartOnMiss && running) {
@@ -182,6 +186,7 @@ class WakeWordService : Service() {
     }
 
     private fun handleCommand(text: String) {
+        WakeWordServiceState.setStatus(ListeningStatus.THINKING)
         updateNotification("Thinking...")
         Thread {
             val outcome = kotlinx.coroutines.runBlocking { engine.handleUserInput(text) }
@@ -196,6 +201,7 @@ class WakeWordService : Service() {
     }
 
     private fun speakThenResumeWake(text: String) {
+        WakeWordServiceState.setStatus(ListeningStatus.SPEAKING)
         updateNotification("Listening for \"Hey Javis\"...")
         if (ttsReady && text.isNotBlank()) {
             tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "javis_bg_utterance")
