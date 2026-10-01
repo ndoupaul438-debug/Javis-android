@@ -47,6 +47,7 @@ object CommandRouter {
             "create_note" -> JavisCommand.CreateNote(target.ifBlank { response.message ?: "" })
             "read_note" -> JavisCommand.ReadNote
             "open_settings" -> JavisCommand.OpenSettings(target)
+            "open_whatsapp_contact" -> JavisCommand.OpenWhatsAppContact(target)
             else -> JavisCommand.Unsupported("Unhandled action: $action")
         }
     }

@@ -18,6 +18,7 @@ object CommandValidator {
         "calculator",
         "create_note",
         "read_note",
+        "open_whatsapp_contact",
         "open_settings"
     )
 

@@ -17,6 +17,7 @@ class ToolRegistry(context: Context) {
         ReadNoteTool(notesStore),
         ShowNotificationTool(context),
         OpenSettingsTool(context),
+        WhatsAppContactTool(context),
     ).associateBy { it.name }
 
     fun toolFor(name: String): JavisTool? = tools[name]
@@ -40,6 +41,7 @@ class ToolRegistry(context: Context) {
                 "title" to command.title, "message" to command.message
             )
             is JavisCommand.OpenSettings -> "open_settings" to mapOf("target" to command.section)
+            is JavisCommand.OpenWhatsAppContact -> "open_whatsapp_contact" to mapOf("target" to command.contactName)
             else -> return ToolResult.Failure("This command type isn't handled by a device tool.")
         }
 

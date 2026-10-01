@@ -26,6 +26,7 @@ sealed class JavisCommand {
     object ReadNote : JavisCommand()
 
     data class OpenSettings(val section: String) : JavisCommand()
+    data class OpenWhatsAppContact(val contactName: String) : JavisCommand()
 
     data class PlainResponse(val message: String) : JavisCommand()
 

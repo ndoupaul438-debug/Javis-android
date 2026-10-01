@@ -124,6 +124,7 @@ class AnthropicBackend(private val apiKey: String) : AIBackend {
             "create_note" -> AIResponse(type = "action", action = "create_note", target = arg("text"))
             "read_note" -> AIResponse(type = "action", action = "read_note")
             "open_settings" -> AIResponse(type = "action", action = "open_settings", target = arg("section"))
+            "open_whatsapp_contact" -> AIResponse(type = "action", action = "open_whatsapp_contact", target = arg("contact_name"))
             else -> AIResponse(
                 type = "response",
                 message = "I tried to do something I'm not allowed to do on this device."
@@ -182,6 +183,7 @@ class AnthropicBackend(private val apiKey: String) : AIBackend {
             add(tool("create_note", "Save a note on the device, replacing any previous note.", "text", "The note's content."))
             add(noArgTool("read_note", "Read back the currently saved note."))
             add(tool("open_settings", "Open a specific Android settings screen.", "section", "e.g. 'wifi', 'bluetooth', 'display'."))
+            add(tool("open_whatsapp_contact", "Find a phone contact and open a WhatsApp chat.", "contact_name", "The contact name to open in WhatsApp."))
         }
     }
 }

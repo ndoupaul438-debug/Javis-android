@@ -8,6 +8,7 @@
 
     <!-- Needed for voice input (SpeechRecognizer) -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
 
     <!-- Needed to launch other installed apps via intents (e.g. "open WhatsApp") -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
