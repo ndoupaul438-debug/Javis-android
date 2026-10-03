@@ -27,6 +27,7 @@ import com.javis.ai.GroqBackend
 import com.javis.ai.LLMPIBackend
 import com.javis.ai.MockBackend
 import com.javis.assistant.JavisAssistantEngine
+import com.javis.assistant.AssistantOutcome
 import com.javis.data.ApiKeyStore
 import java.util.Locale
 
@@ -38,6 +39,11 @@ class WakeWordService : Service() {
     private var ttsReady = false
     private val mainHandler = Handler(Looper.getMainLooper())
     private var running = false
+
+    // After the wake word, Javis stays in a natural conversation
+    // until the user stops responding.
+    private var conversationMode = false
+    private var processingCommand = false
 
     private lateinit var engine: JavisAssistantEngine
 
@@ -139,74 +145,261 @@ class WakeWordService : Service() {
         if (heard) {
             wakeRecognizer?.destroy()
             wakeRecognizer = null
-            WakeWordServiceState.setStatus(ListeningStatus.LISTENING_FOR_COMMAND)
-            updateNotification("Listening for your command...")
-            captureCommand()
+
+            conversationMode = true
+            processingCommand = false
+
+            WakeWordServiceState.setStatus(ListeningStatus.SPEAKING)
+            updateNotification("JAVIS is listening...")
+            speakAndContinue("Yes?")
         } else if (restartOnMiss && running) {
             runWakeRecognizer()
         }
     }
 
     private fun captureCommand() {
+        if (!running || !conversationMode || processingCommand) return
+
         commandRecognizer?.destroy()
         commandRecognizer = SpeechRecognizer.createSpeechRecognizer(this).apply {
             setRecognitionListener(object : RecognitionListener {
-                override fun onReadyForSpeech(params: Bundle?) {}
+
+                override fun onReadyForSpeech(params: Bundle?) {
+                    WakeWordServiceState.setStatus(
+                        ListeningStatus.LISTENING_FOR_COMMAND
+                    )
+                    updateNotification("JAVIS is listening...")
+                }
+
                 override fun onBeginningOfSpeech() {}
+
                 override fun onRmsChanged(rmsdB: Float) {}
+
                 override fun onBufferReceived(buffer: ByteArray?) {}
+
                 override fun onEndOfSpeech() {}
-                override fun onEvent(eventType: Int, params: Bundle?) {}
-                override fun onPartialResults(partialResults: Bundle?) {}
+
+                override fun onEvent(
+                    eventType: Int,
+                    params: Bundle?
+                ) {}
+
+                override fun onPartialResults(
+                    partialResults: Bundle?
+                ) {}
 
                 override fun onResults(results: Bundle?) {
-                    val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                    val text = matches?.firstOrNull()?.trim()
-                    if (text.isNullOrBlank()) {
-                        speakThenResumeWake("I didn't catch that.")
+                    if (!running || !conversationMode) return
+
+                    val matches =
+                        results?.getStringArrayList(
+                            SpeechRecognizer.RESULTS_RECOGNITION
+                        )
+
+                    val text = matches?.firstOrNull()?.trim().orEmpty()
+
+                    if (text.isBlank()) {
+                        endConversation()
                     } else {
                         handleCommand(text)
                     }
                 }
 
                 override fun onError(error: Int) {
-                    speakThenResumeWake("Sorry, I didn't catch that.")
+                    if (!running) return
+
+                    // Normal silence means the user has finished
+                    // the conversation. Other recognition errors
+                    // get a short retry.
+                    if (error == SpeechRecognizer.ERROR_NO_MATCH ||
+                        error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT
+                    ) {
+                        endConversation()
+                    } else {
+                        mainHandler.postDelayed({
+                            if (running && conversationMode &&
+                                !processingCommand
+                            ) {
+                                captureCommand()
+                            }
+                        }, 350)
+                    }
                 }
             })
         }
-        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
+
+        val intent = Intent(
+            RecognizerIntent.ACTION_RECOGNIZE_SPEECH
+        ).apply {
+            putExtra(
+                RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+                RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
+            )
+            putExtra(
+                RecognizerIntent.EXTRA_LANGUAGE,
+                Locale.getDefault()
+            )
+            putExtra(
+                RecognizerIntent.EXTRA_PARTIAL_RESULTS,
+                true
+            )
+            putExtra(
+                RecognizerIntent.EXTRA_MAX_RESULTS,
+                3
+            )
+            putExtra(
+                RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS,
+                900L
+            )
+            putExtra(
+                RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS,
+                700L
+            )
         }
+
         try {
             commandRecognizer?.startListening(intent)
-        } catch (e: Exception) {
-            speakThenResumeWake("Sorry, something went wrong.")
+        } catch (_: Exception) {
+            if (running && conversationMode) {
+                mainHandler.postDelayed({
+                    captureCommand()
+                }, 500)
+            }
         }
     }
 
+    private fun endConversation() {
+        if (!running) return
+
+        conversationMode = false
+        processingCommand = false
+
+        commandRecognizer?.cancel()
+        commandRecognizer?.destroy()
+        commandRecognizer = null
+
+        WakeWordServiceState.setStatus(
+            ListeningStatus.LISTENING_FOR_WAKE
+        )
+        updateNotification("Listening for \"Hey Javis\"...")
+        mainHandler.postDelayed({
+            if (running && !conversationMode) {
+                runWakeRecognizer()
+            }
+        }, 250)
+    }
+
+    private fun speakAndContinue(text: String) {
+        if (!running) return
+
+        WakeWordServiceState.setStatus(ListeningStatus.SPEAKING)
+
+        if (!ttsReady || text.isBlank()) {
+            mainHandler.postDelayed({
+                if (running && conversationMode && !processingCommand) {
+                    captureCommand()
+                }
+            }, 150)
+            return
+        }
+
+        tts?.speak(
+            text,
+            TextToSpeech.QUEUE_FLUSH,
+            null,
+            "javis_conversation"
+        )
+
+        mainHandler.postDelayed({
+            if (running && conversationMode && !processingCommand) {
+                captureCommand()
+            }
+        }, 900)
+    }
+
     private fun handleCommand(text: String) {
+        if (!running || processingCommand) return
+
+        processingCommand = true
+
         WakeWordServiceState.setStatus(ListeningStatus.THINKING)
-        updateNotification("Thinking...")
+        updateNotification("JAVIS is thinking...")
+
         Thread {
-            val outcome = kotlinx.coroutines.runBlocking { engine.handleUserInput(text) }
+            val outcome = try {
+                kotlinx.coroutines.runBlocking {
+                    engine.handleUserInput(text)
+                }
+            } catch (e: Exception) {
+                AssistantOutcome(
+                    displayText = "I'm sorry, something went wrong while processing that.",
+                    spoken = true
+                )
+            }
+
             mainHandler.post {
+                processingCommand = false
+
+                if (!running) return@post
+
                 if (outcome.pendingConfirmation != null) {
-                    speakThenResumeWake("That needs your confirmation — please open JAVIS to approve it.")
-                } else {
+                    speakThenResumeWake(
+                        "Please confirm that action in Javis."
+                    )
+                } else if (outcome.spoken && outcome.displayText.isNotBlank()) {
                     speakThenResumeWake(outcome.displayText)
+                } else {
+                    // Some actions deliberately have no spoken response.
+                    // Continue the conversation without saying anything.
+                    if (conversationMode) {
+                        captureCommand()
+                    } else {
+                        runWakeRecognizer()
+                    }
                 }
             }
         }.start()
     }
 
     private fun speakThenResumeWake(text: String) {
+        if (!running) return
+
         WakeWordServiceState.setStatus(ListeningStatus.SPEAKING)
-        updateNotification("Listening for \"Hey Javis\"...")
-        if (ttsReady && text.isNotBlank()) {
-            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "javis_bg_utterance")
+        updateNotification("JAVIS is speaking...")
+
+        if (!ttsReady || text.isBlank()) {
+            if (conversationMode) {
+                mainHandler.postDelayed({
+                    if (running && conversationMode) {
+                        captureCommand()
+                    }
+                }, 150)
+            } else {
+                mainHandler.postDelayed({
+                    if (running) runWakeRecognizer()
+                }, 150)
+            }
+            return
         }
-        mainHandler.postDelayed({ if (running) runWakeRecognizer() }, 600)
+
+        tts?.speak(
+            text,
+            TextToSpeech.QUEUE_FLUSH,
+            null,
+            "javis_bg_utterance"
+        )
+
+        // The microphone is opened after Javis finishes speaking.
+        // This prevents Javis from hearing its own voice.
+        mainHandler.postDelayed({
+            if (!running) return@postDelayed
+
+            if (conversationMode) {
+                captureCommand()
+            } else {
+                runWakeRecognizer()
+            }
+        }, 1200)
     }
 
     private fun createNotificationChannel() {
