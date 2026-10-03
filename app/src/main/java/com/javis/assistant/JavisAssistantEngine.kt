@@ -39,11 +39,11 @@ class JavisAssistantEngine(
     private val offlineEngine = OfflineEngine()
     private val conversationId: String = UUID.randomUUID().toString()
 
-    private val _history = mutableListOf<ConversationTurn>()
-    val history: List<ConversationTurn> get() = _history.toList()
+    private val memory = ConversationMemory(maxTurns = 24)
+    val history: List<ConversationTurn> get() = memory.recentTurns()
 
     fun clearConversation() {
-        _history.clear()
+        memory.clear()
     }
 
     fun isOnline(): Boolean = networkMonitor.isOnline()
@@ -59,7 +59,7 @@ class JavisAssistantEngine(
             return AssistantOutcome("I didn't catch that — could you say that again?")
         }
 
-        _history.add(ConversationTurn("user", normalized))
+        memory.addUser(normalized)
 
         val online = networkMonitor.isOnline()
         val backend = if (online) onlineBackend else offlineEngine
@@ -75,7 +75,7 @@ class JavisAssistantEngine(
         val aiResponse = aiResult.getOrElse { error ->
             val message = "I couldn't reach the AI backend (${error.message ?: "unknown error"})." +
                 if (!online) " You're currently offline." else ""
-            _history.add(ConversationTurn("javis", message))
+            memory.addJavis(message)
             return AssistantOutcome(message)
         }
 
@@ -83,15 +83,15 @@ class JavisAssistantEngine(
 
         return when (command) {
             is JavisCommand.PlainResponse -> {
-                _history.add(ConversationTurn("javis", command.message))
+                memory.addJavis(command.message)
                 AssistantOutcome(command.message)
             }
             is JavisCommand.Unsupported -> {
-                _history.add(ConversationTurn("javis", command.reason))
+                memory.addJavis(command.reason)
                 AssistantOutcome(command.reason)
             }
             is JavisCommand.Speak -> {
-                _history.add(ConversationTurn("javis", command.text))
+                memory.addJavis(command.text)
                 AssistantOutcome(command.text)
             }
             else -> {
@@ -119,7 +119,7 @@ class JavisAssistantEngine(
             is ToolResult.Failure -> result.reason
             is ToolResult.NeedsConfirmation -> result.message
         }
-        _history.add(ConversationTurn("javis", text))
+        memory.addJavis(text)
         return AssistantOutcome(text)
     }
 

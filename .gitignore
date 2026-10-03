@@ -8,3 +8,11 @@
 .externalNativeBuild
 .cxx
 local.properties
+
+app/build/
+*.backup
+*.before-v2
+*.continuous-backup
+*.pre-voice-foundation
+*.pre-voice-foundation-final
+*.voice-backup

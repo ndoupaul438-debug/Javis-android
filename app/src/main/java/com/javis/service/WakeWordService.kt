@@ -7,15 +7,24 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
+import android.view.Gravity
+import android.view.View
+import android.view.WindowManager
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
 import androidx.core.app.NotificationCompat
 import com.javis.BuildConfig
 import com.javis.MainActivity
@@ -33,202 +42,663 @@ import java.util.Locale
 
 class WakeWordService : Service() {
 
+
     private var wakeRecognizer: SpeechRecognizer? = null
     private var commandRecognizer: SpeechRecognizer? = null
+
     private var tts: TextToSpeech? = null
     private var ttsReady = false
-    private val mainHandler = Handler(Looper.getMainLooper())
-    private var running = false
 
-    // After the wake word, Javis stays in a natural conversation
-    // until the user stops responding.
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    private var running = false
     private var conversationMode = false
     private var processingCommand = false
+    private var recognitionActive = false
+    private var silenceRetries = 0
+
+    private var orbView: View? = null
+    private var orbWindowManager: WindowManager? = null
+    private var orbRotation = 0f
+    private var orbAnimator: android.animation.ValueAnimator? = null
+
+    private var audioManager: AudioManager? = null
+    private var audioFocusRequest: AudioFocusRequest? = null
+    private var audioFocusHeld = false
 
     private lateinit var engine: JavisAssistantEngine
 
+
     override fun onCreate() {
         super.onCreate()
+
+        audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+
         tts = TextToSpeech(this) { status ->
             ttsReady = status == TextToSpeech.SUCCESS
-            if (ttsReady) tts?.language = Locale.getDefault()
-        }
-        engine = JavisAssistantEngine(applicationContext, pickBackend())
-        createNotificationChannel()
-    }
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (!running) {
-            running = true
-            WakeWordServiceState.setRunning(true)
-            startForeground(NOTIFICATION_ID, buildNotification("Listening for \"Hey Javis\"..."))
-            runWakeRecognizer()
+            if (ttsReady) {
+                tts?.language = Locale.getDefault()
+
+                tts?.setOnUtteranceProgressListener(
+                    object : UtteranceProgressListener() {
+                        override fun onStart(utteranceId: String?) {
+                            WakeWordServiceState.setStatus(
+                                ListeningStatus.SPEAKING
+                            )
+                        }
+
+                        override fun onDone(utteranceId: String?) {
+                            mainHandler.post {
+                                releaseVoiceAudioSession()
+
+                                if (!running) return@post
+
+                                if (conversationMode && !processingCommand) {
+                                    captureCommand()
+                                } else if (!conversationMode) {
+                                    scheduleWakeRestart(150)
+                                }
+                            }
+                        }
+
+                        override fun onError(utteranceId: String?) {
+                            mainHandler.post {
+                                releaseVoiceAudioSession()
+
+                                if (!running) return@post
+
+                                if (conversationMode && !processingCommand) {
+                                    captureCommand()
+                                } else if (!conversationMode) {
+                                    scheduleWakeRestart(150)
+                                }
+                            }
+                        }
+                    }
+                )
+            }
         }
-        return START_STICKY
+
+        engine = JavisAssistantEngine(
+            applicationContext,
+            pickBackend()
+        )
+
+        createNotificationChannel()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    override fun onStartCommand(
+        intent: Intent?,
+        flags: Int,
+        startId: Int
+    ): Int {
+        if (!running) {
+            running = true
+
+            WakeWordServiceState.setRunning(true)
+
+            showJavisOrb()
+
+            startForeground(
+                NOTIFICATION_ID,
+                buildNotification("Listening for \"Hey Javis\"...")
+            )
+
+            runWakeRecognizer()
+        }
+
+        return START_STICKY
+    }
+
     override fun onDestroy() {
         running = false
+
         WakeWordServiceState.setRunning(false)
+
+        cancelPendingCallbacks()
+
+        wakeRecognizer?.cancel()
         wakeRecognizer?.destroy()
+        wakeRecognizer = null
+
+        commandRecognizer?.cancel()
         commandRecognizer?.destroy()
+        commandRecognizer = null
+
         tts?.stop()
         tts?.shutdown()
+        tts = null
+
+        releaseVoiceAudioSession()
+
+        hideJavisOrb()
+
         super.onDestroy()
     }
 
-    private fun pickBackend(): AIBackend {
-        val store = ApiKeyStore(applicationContext)
-        val groqKey = store.getGroqKey()
-        if (!groqKey.isNullOrBlank()) return GroqBackend(groqKey)
-        val geminiKey = store.getGeminiKey()
-        if (!geminiKey.isNullOrBlank()) return GeminiBackend(geminiKey)
-        val anthropicKey = store.getApiKey()
-        if (!anthropicKey.isNullOrBlank()) return AnthropicBackend(anthropicKey)
-        val hasRealEndpoint = BuildConfig.LLMPI_BASE_URL.isNotBlank() &&
-            !BuildConfig.LLMPI_BASE_URL.contains("example.invalid")
-        return if (hasRealEndpoint) {
-            LLMPIBackend(BuildConfig.LLMPI_BASE_URL, BuildConfig.LLMPI_API_KEY)
-        } else {
-            MockBackend()
+
+    private fun showJavisOrb() {
+        if (orbView != null) return
+        if (!android.provider.Settings.canDrawOverlays(this)) return
+
+        val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        orbWindowManager = wm
+
+        val size = (30 * resources.displayMetrics.density).toInt()
+
+        val orb = View(this).apply {
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(Color.rgb(20, 35, 55))
+                setStroke(
+                    (2 * resources.displayMetrics.density).toInt(),
+                    Color.rgb(47, 216, 255)
+                )
+            }
+            elevation = 14f
+        }
+
+        val params = WindowManager.LayoutParams(
+            size,
+            size,
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            else
+                @Suppress("DEPRECATION")
+                WindowManager.LayoutParams.TYPE_PHONE,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+            android.graphics.PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = (8 * resources.displayMetrics.density).toInt()
+            y = (12 * resources.displayMetrics.density).toInt()
+        }
+
+        try {
+            wm.addView(orb, params)
+            orbView = orb
+        } catch (_: Exception) {
+            orbView = null
+            orbWindowManager = null
+            return
+        }
+
+        orbAnimator?.cancel()
+
+        orbAnimator = android.animation.ValueAnimator.ofFloat(
+            0f,
+            360f
+        ).apply {
+            duration = 2200L
+            repeatCount = android.animation.ValueAnimator.INFINITE
+
+            addUpdateListener {
+                orbRotation = it.animatedValue as Float
+                orb.rotation = orbRotation
+            }
+
+            start()
         }
     }
+
+    private fun hideJavisOrb() {
+        orbAnimator?.cancel()
+        orbAnimator = null
+
+        orbView?.let { view ->
+            try {
+                orbWindowManager?.removeView(view)
+            } catch (_: Exception) {
+            }
+        }
+
+        orbView = null
+        orbWindowManager = null
+    }
+
+
+    private fun requestVoiceAudioFocus() {
+        val manager = audioManager ?: return
+
+        if (audioFocusHeld) return
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val attributes = AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_ASSISTANT)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                .build()
+
+            audioFocusRequest = AudioFocusRequest.Builder(
+                AudioManager.AUDIOFOCUS_GAIN_TRANSIENT
+            )
+                .setAudioAttributes(attributes)
+                .setAcceptsDelayedFocusGain(false)
+                .build()
+
+            val result = manager.requestAudioFocus(
+                audioFocusRequest!!
+            )
+
+            audioFocusHeld =
+                result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+        } else {
+            @Suppress("DEPRECATION")
+            val result = manager.requestAudioFocus(
+                null,
+                AudioManager.STREAM_MUSIC,
+                AudioManager.AUDIOFOCUS_GAIN_TRANSIENT
+            )
+
+            audioFocusHeld =
+                result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+        }
+    }
+
+    private fun releaseVoiceAudioSession() {
+        val manager = audioManager ?: return
+
+        if (!audioFocusHeld) return
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            audioFocusRequest?.let {
+                manager.abandonAudioFocusRequest(it)
+            }
+            audioFocusRequest = null
+        } else {
+            @Suppress("DEPRECATION")
+            manager.abandonAudioFocus(null)
+        }
+
+        audioFocusHeld = false
+    }
+
+
+    private val WAKE_RESTART_TOKEN = Any()
+    private val CONVERSATION_TOKEN = Any()
+
+    private fun cancelWakeRestartCallbacks() {
+        mainHandler.removeCallbacksAndMessages(
+            WAKE_RESTART_TOKEN
+        )
+    }
+
+    private fun cancelConversationCallbacks() {
+        mainHandler.removeCallbacksAndMessages(
+            CONVERSATION_TOKEN
+        )
+    }
+
+    private fun cancelPendingCallbacks() {
+        cancelWakeRestartCallbacks()
+        cancelConversationCallbacks()
+    }
+
+    private fun scheduleWakeRestart(delayMillis: Long) {
+        cancelWakeRestartCallbacks()
+
+        mainHandler.postAtTime(
+            {
+                if (!running) return@postAtTime
+                if (conversationMode) return@postAtTime
+                if (recognitionActive) return@postAtTime
+
+                runWakeRecognizer()
+            },
+            WAKE_RESTART_TOKEN,
+            android.os.SystemClock.uptimeMillis() + delayMillis
+        )
+    }
+
+    private fun scheduleConversationRetry(delayMillis: Long) {
+        cancelConversationCallbacks()
+
+        mainHandler.postAtTime(
+            {
+                if (!running) return@postAtTime
+                if (!conversationMode) return@postAtTime
+                if (processingCommand) return@postAtTime
+                if (recognitionActive) return@postAtTime
+
+                captureCommand()
+            },
+            CONVERSATION_TOKEN,
+            android.os.SystemClock.uptimeMillis() + delayMillis
+        )
+    }
+
 
     private fun runWakeRecognizer() {
         if (!running) return
-        if (!SpeechRecognizer.isRecognitionAvailable(this)) return
-        WakeWordServiceState.setStatus(ListeningStatus.LISTENING_FOR_WAKE)
+        if (conversationMode) return
+        if (recognitionActive) return
 
+        cancelWakeRestartCallbacks()
+
+        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
+            updateNotification("Speech recognition unavailable")
+            scheduleWakeRestart(2000)
+            return
+        }
+
+        wakeRecognizer?.cancel()
         wakeRecognizer?.destroy()
-        wakeRecognizer = SpeechRecognizer.createSpeechRecognizer(this).apply {
-            setRecognitionListener(object : RecognitionListener {
-                override fun onReadyForSpeech(params: Bundle?) {}
-                override fun onBeginningOfSpeech() {}
-                override fun onRmsChanged(rmsdB: Float) {}
-                override fun onBufferReceived(buffer: ByteArray?) {}
-                override fun onEndOfSpeech() {}
-                override fun onEvent(eventType: Int, params: Bundle?) {}
 
-                override fun onPartialResults(partialResults: Bundle?) {
-                    checkForWakeWord(partialResults, restartOnMiss = false)
+        wakeRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
+
+        wakeRecognizer?.setRecognitionListener(
+            object : RecognitionListener {
+
+                override fun onReadyForSpeech(params: Bundle?) {
+                    recognitionActive = true
+
+                    WakeWordServiceState.setStatus(
+                        ListeningStatus.LISTENING_FOR_WAKE
+                    )
+
+                    updateNotification(
+                        "Listening for \"Hey Javis\"..."
+                    )
                 }
 
-                override fun onResults(results: Bundle?) {
-                    checkForWakeWord(results, restartOnMiss = true)
+                override fun onBeginningOfSpeech() {
+                    recognitionActive = true
+                }
+
+                override fun onRmsChanged(rmsdB: Float) {}
+
+                override fun onBufferReceived(buffer: ByteArray?) {}
+
+                override fun onEndOfSpeech() {
+                    recognitionActive = false
                 }
 
                 override fun onError(error: Int) {
-                    if (running) mainHandler.postDelayed({ runWakeRecognizer() }, 300)
-                }
-            })
-        }
+                    recognitionActive = false
 
-        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
-            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-        }
-        try {
-            wakeRecognizer?.startListening(intent)
-        } catch (e: Exception) {
-            if (running) mainHandler.postDelayed({ runWakeRecognizer() }, 500)
-        }
-    }
+                    if (!running || conversationMode) return
 
-    private fun checkForWakeWord(bundle: Bundle?, restartOnMiss: Boolean) {
-        val matches = bundle?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-        val text = matches?.firstOrNull()?.lowercase(Locale.getDefault()) ?: ""
-        val heard = text.contains("hey javis") || text.contains("hey jarvis") ||
-            text.contains("javis") || text.contains("jarvis")
-        if (heard) {
-            wakeRecognizer?.destroy()
-            wakeRecognizer = null
+                    when (error) {
+                        SpeechRecognizer.ERROR_CLIENT,
+                        SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> {
+                            scheduleWakeRestart(500)
+                        }
 
-            conversationMode = true
-            processingCommand = false
+                        SpeechRecognizer.ERROR_NO_MATCH,
+                        SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> {
+                            scheduleWakeRestart(250)
+                        }
 
-            WakeWordServiceState.setStatus(ListeningStatus.SPEAKING)
-            updateNotification("JAVIS is listening...")
-            speakAndContinue("Yes?")
-        } else if (restartOnMiss && running) {
-            runWakeRecognizer()
-        }
-    }
-
-    private fun captureCommand() {
-        if (!running || !conversationMode || processingCommand) return
-
-        commandRecognizer?.destroy()
-        commandRecognizer = SpeechRecognizer.createSpeechRecognizer(this).apply {
-            setRecognitionListener(object : RecognitionListener {
-
-                override fun onReadyForSpeech(params: Bundle?) {
-                    WakeWordServiceState.setStatus(
-                        ListeningStatus.LISTENING_FOR_COMMAND
-                    )
-                    updateNotification("JAVIS is listening...")
+                        else -> {
+                            scheduleWakeRestart(1000)
+                        }
+                    }
                 }
 
-                override fun onBeginningOfSpeech() {}
+                override fun onResults(results: Bundle?) {
+                    recognitionActive = false
 
-                override fun onRmsChanged(rmsdB: Float) {}
+                    if (!running || conversationMode) return
 
-                override fun onBufferReceived(buffer: ByteArray?) {}
+                    val matches = results?.getStringArrayList(
+                        SpeechRecognizer.RESULTS_RECOGNITION
+                    ) ?: return
 
-                override fun onEndOfSpeech() {}
+                    for (text in matches) {
+                        if (checkForWakeWord(text)) {
+                            startConversation()
+                            return
+                        }
+                    }
+
+                    scheduleWakeRestart(150)
+                }
+
+                override fun onPartialResults(partialResults: Bundle?) {
+                    if (!running || conversationMode) return
+
+                    val matches = partialResults?.getStringArrayList(
+                        SpeechRecognizer.RESULTS_RECOGNITION
+                    ) ?: return
+
+                    for (text in matches) {
+                        if (checkForWakeWord(text)) {
+                            wakeRecognizer?.cancel()
+                            recognitionActive = false
+                            startConversation()
+                            return
+                        }
+                    }
+                }
 
                 override fun onEvent(
                     eventType: Int,
                     params: Bundle?
                 ) {}
+            }
+        )
 
-                override fun onPartialResults(
-                    partialResults: Bundle?
-                ) {}
-
-                override fun onResults(results: Bundle?) {
-                    if (!running || !conversationMode) return
-
-                    val matches =
-                        results?.getStringArrayList(
-                            SpeechRecognizer.RESULTS_RECOGNITION
-                        )
-
-                    val text = matches?.firstOrNull()?.trim().orEmpty()
-
-                    if (text.isBlank()) {
-                        endConversation()
-                    } else {
-                        handleCommand(text)
-                    }
-                }
-
-                override fun onError(error: Int) {
-                    if (!running) return
-
-                    // Normal silence means the user has finished
-                    // the conversation. Other recognition errors
-                    // get a short retry.
-                    if (error == SpeechRecognizer.ERROR_NO_MATCH ||
-                        error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT
-                    ) {
-                        endConversation()
-                    } else {
-                        mainHandler.postDelayed({
-                            if (running && conversationMode &&
-                                !processingCommand
-                            ) {
-                                captureCommand()
-                            }
-                        }, 350)
-                    }
-                }
-            })
+        val intent = RecognizerIntent(
+            RecognizerIntent.ACTION_RECOGNIZE_SPEECH
+        ).apply {
+            putExtra(
+                RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+                RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
+            )
+            putExtra(
+                RecognizerIntent.EXTRA_LANGUAGE,
+                Locale.getDefault()
+            )
+            putExtra(
+                RecognizerIntent.EXTRA_PARTIAL_RESULTS,
+                true
+            )
+            putExtra(
+                RecognizerIntent.EXTRA_MAX_RESULTS,
+                3
+            )
         }
 
-        val intent = Intent(
+        try {
+            wakeRecognizer?.startListening(intent)
+        } catch (_: Exception) {
+            recognitionActive = false
+            scheduleWakeRestart(700)
+        }
+    }
+
+    private fun checkForWakeWord(text: String): Boolean {
+        val normalized = text
+            .lowercase(Locale.getDefault())
+            .replace(Regex("[^a-z0-9 ]"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+
+        return normalized == "hey javis" ||
+            normalized.startsWith("hey javis ") ||
+            normalized == "hey jarvis" ||
+            normalized.startsWith("hey jarvis ") ||
+            normalized == "javis" ||
+            normalized.startsWith("javis ") ||
+            normalized == "jarvis" ||
+            normalized.startsWith("jarvis ")
+    }
+
+
+    private fun startConversation() {
+        if (!running) return
+
+        cancelWakeRestartCallbacks()
+        cancelConversationCallbacks()
+
+        wakeRecognizer?.cancel()
+        recognitionActive = false
+
+        conversationMode = true
+        processingCommand = false
+        silenceRetries = 0
+
+        WakeWordServiceState.setStatus(
+            ListeningStatus.SPEAKING
+        )
+
+        updateNotification("JAVIS is ready — talk naturally")
+
+        speakText("Yes?")
+    }
+
+    private fun endConversation() {
+        if (!running) return
+
+        conversationMode = false
+        processingCommand = false
+        recognitionActive = false
+        silenceRetries = 0
+
+        cancelConversationCallbacks()
+
+        commandRecognizer?.cancel()
+
+        WakeWordServiceState.setStatus(
+            ListeningStatus.LISTENING_FOR_WAKE
+        )
+
+        updateNotification(
+            "Listening for \"Hey Javis\"..."
+        )
+
+        scheduleWakeRestart(250)
+    }
+
+
+    private fun captureCommand() {
+        if (!running) return
+        if (!conversationMode) return
+        if (processingCommand) return
+        if (recognitionActive) return
+
+        cancelConversationCallbacks()
+
+        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
+            updateNotification("Speech recognition unavailable")
+            scheduleConversationRetry(1500)
+            return
+        }
+
+        if (commandRecognizer == null) {
+            commandRecognizer =
+                SpeechRecognizer.createSpeechRecognizer(this)
+
+            commandRecognizer?.setRecognitionListener(
+                object : RecognitionListener {
+
+                    override fun onReadyForSpeech(
+                        params: Bundle?
+                    ) {
+                        recognitionActive = true
+                        silenceRetries = 0
+
+                        WakeWordServiceState.setStatus(
+                            ListeningStatus.LISTENING_FOR_COMMAND
+                        )
+
+                        updateNotification(
+                            "JAVIS is listening..."
+                        )
+                    }
+
+                    override fun onBeginningOfSpeech() {
+                        recognitionActive = true
+                    }
+
+                    override fun onRmsChanged(rmsdB: Float) {}
+
+                    override fun onBufferReceived(
+                        buffer: ByteArray?
+                    ) {}
+
+                    override fun onEndOfSpeech() {
+                        recognitionActive = false
+                    }
+
+                    override fun onError(error: Int) {
+                        recognitionActive = false
+
+                        if (!running || !conversationMode) return
+
+                        when (error) {
+                            SpeechRecognizer.ERROR_NO_MATCH,
+                            SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> {
+                                silenceRetries++
+
+                                if (silenceRetries <= 2) {
+                                    scheduleConversationRetry(250)
+                                } else {
+                                    endConversation()
+                                }
+                            }
+
+                            SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> {
+                                scheduleConversationRetry(500)
+                            }
+
+                            else -> {
+                                scheduleConversationRetry(700)
+                            }
+                        }
+                    }
+
+                    override fun onResults(
+                        results: Bundle?
+                    ) {
+                        recognitionActive = false
+
+                        if (!running || !conversationMode) return
+
+                        val matches =
+                            results?.getStringArrayList(
+                                SpeechRecognizer.RESULTS_RECOGNITION
+                            )
+
+                        val text = matches
+                            ?.firstOrNull()
+                            ?.trim()
+                            .orEmpty()
+
+                        if (text.isBlank()) {
+                            silenceRetries++
+
+                            if (silenceRetries <= 2) {
+                                scheduleConversationRetry(250)
+                            } else {
+                                endConversation()
+                            }
+
+                            return
+                        }
+
+                        silenceRetries = 0
+                        handleCommand(text)
+                    }
+
+                    override fun onPartialResults(
+                        partialResults: Bundle?
+                    ) {
+                        if (!running || !conversationMode) return
+                    }
+
+                    override fun onEvent(
+                        eventType: Int,
+                        params: Bundle?
+                    ) {}
+                }
+            )
+        }
+
+        val intent = RecognizerIntent(
             RecognizerIntent.ACTION_RECOGNIZE_SPEECH
         ).apply {
             putExtra(
@@ -249,80 +719,37 @@ class WakeWordService : Service() {
             )
             putExtra(
                 RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS,
-                900L
+                1400L
             )
             putExtra(
                 RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS,
-                700L
+                1100L
+            )
+            putExtra(
+                RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS,
+                800L
             )
         }
 
         try {
             commandRecognizer?.startListening(intent)
         } catch (_: Exception) {
-            if (running && conversationMode) {
-                mainHandler.postDelayed({
-                    captureCommand()
-                }, 500)
-            }
+            recognitionActive = false
+            scheduleConversationRetry(500)
         }
     }
 
-    private fun endConversation() {
-        if (!running) return
-
-        conversationMode = false
-        processingCommand = false
-
-        commandRecognizer?.cancel()
-        commandRecognizer?.destroy()
-        commandRecognizer = null
-
-        WakeWordServiceState.setStatus(
-            ListeningStatus.LISTENING_FOR_WAKE
-        )
-        updateNotification("Listening for \"Hey Javis\"...")
-        mainHandler.postDelayed({
-            if (running && !conversationMode) {
-                runWakeRecognizer()
-            }
-        }, 250)
-    }
-
-    private fun speakAndContinue(text: String) {
-        if (!running) return
-
-        WakeWordServiceState.setStatus(ListeningStatus.SPEAKING)
-
-        if (!ttsReady || text.isBlank()) {
-            mainHandler.postDelayed({
-                if (running && conversationMode && !processingCommand) {
-                    captureCommand()
-                }
-            }, 150)
-            return
-        }
-
-        tts?.speak(
-            text,
-            TextToSpeech.QUEUE_FLUSH,
-            null,
-            "javis_conversation"
-        )
-
-        mainHandler.postDelayed({
-            if (running && conversationMode && !processingCommand) {
-                captureCommand()
-            }
-        }, 900)
-    }
 
     private fun handleCommand(text: String) {
-        if (!running || processingCommand) return
+        if (!running || !conversationMode) return
+        if (processingCommand) return
 
         processingCommand = true
 
-        WakeWordServiceState.setStatus(ListeningStatus.THINKING)
+        WakeWordServiceState.setStatus(
+            ListeningStatus.THINKING
+        )
+
         updateNotification("JAVIS is thinking...")
 
         Thread {
@@ -330,117 +757,215 @@ class WakeWordService : Service() {
                 kotlinx.coroutines.runBlocking {
                     engine.handleUserInput(text)
                 }
-            } catch (e: Exception) {
+            } catch (_: Exception) {
                 AssistantOutcome(
-                    displayText = "I'm sorry, something went wrong while processing that.",
+                    displayText =
+                        "I'm sorry, something went wrong while processing that.",
                     spoken = true
                 )
             }
 
             mainHandler.post {
-                processingCommand = false
-
                 if (!running) return@post
 
-                if (outcome.pendingConfirmation != null) {
-                    speakThenResumeWake(
+                processingCommand = false
+
+                val confirmation = outcome.pendingConfirmation
+
+                if (confirmation != null) {
+                    speakText(
                         "Please confirm that action in Javis."
                     )
-                } else if (outcome.spoken && outcome.displayText.isNotBlank()) {
-                    speakThenResumeWake(outcome.displayText)
+                    return@post
+                }
+
+                if (outcome.spoken &&
+                    outcome.displayText.isNotBlank()
+                ) {
+                    speakText(outcome.displayText)
+                } else if (conversationMode) {
+                    scheduleConversationRetry(150)
                 } else {
-                    // Some actions deliberately have no spoken response.
-                    // Continue the conversation without saying anything.
-                    if (conversationMode) {
-                        captureCommand()
-                    } else {
-                        runWakeRecognizer()
-                    }
+                    scheduleWakeRestart(150)
                 }
             }
         }.start()
     }
 
-    private fun speakThenResumeWake(text: String) {
+
+    private fun speakText(text: String) {
         if (!running) return
 
-        WakeWordServiceState.setStatus(ListeningStatus.SPEAKING)
-        updateNotification("JAVIS is speaking...")
+        val cleanText = text.trim()
 
-        if (!ttsReady || text.isBlank()) {
-            if (conversationMode) {
-                mainHandler.postDelayed({
-                    if (running && conversationMode) {
-                        captureCommand()
-                    }
-                }, 150)
-            } else {
-                mainHandler.postDelayed({
-                    if (running) runWakeRecognizer()
-                }, 150)
+        if (cleanText.isBlank()) {
+            releaseVoiceAudioSession()
+
+            if (conversationMode && !processingCommand) {
+                scheduleConversationRetry(150)
+            } else if (!conversationMode) {
+                scheduleWakeRestart(150)
             }
+
             return
         }
 
-        tts?.speak(
-            text,
-            TextToSpeech.QUEUE_FLUSH,
-            null,
-            "javis_bg_utterance"
+        WakeWordServiceState.setStatus(
+            ListeningStatus.SPEAKING
         )
 
-        // The microphone is opened after Javis finishes speaking.
-        // This prevents Javis from hearing its own voice.
-        mainHandler.postDelayed({
-            if (!running) return@postDelayed
+        updateNotification("JAVIS is speaking...")
 
-            if (conversationMode) {
-                captureCommand()
-            } else {
-                runWakeRecognizer()
+        requestVoiceAudioFocus()
+
+        if (!ttsReady || tts == null) {
+            releaseVoiceAudioSession()
+
+            if (conversationMode && !processingCommand) {
+                scheduleConversationRetry(150)
+            } else if (!conversationMode) {
+                scheduleWakeRestart(150)
             }
-        }, 1200)
+
+            return
+        }
+
+        val utteranceId =
+            "javis_${System.currentTimeMillis()}"
+
+        val result = tts?.speak(
+            cleanText,
+            TextToSpeech.QUEUE_FLUSH,
+            null,
+            utteranceId
+        )
+
+        if (result == TextToSpeech.ERROR) {
+            releaseVoiceAudioSession()
+
+            if (conversationMode && !processingCommand) {
+                scheduleConversationRetry(150)
+            } else if (!conversationMode) {
+                scheduleWakeRestart(150)
+            }
+        }
+    }
+
+
+    private fun pickBackend(): AIBackend {
+        val store = ApiKeyStore(applicationContext)
+
+        val groqKey = store.getGroqKey()
+        if (!groqKey.isNullOrBlank()) {
+            return GroqBackend(groqKey)
+        }
+
+        val geminiKey = store.getGeminiKey()
+        if (!geminiKey.isNullOrBlank()) {
+            return GeminiBackend(geminiKey)
+        }
+
+        val anthropicKey = store.getAnthropicKey()
+        if (!anthropicKey.isNullOrBlank()) {
+            return AnthropicBackend(anthropicKey)
+        }
+
+        val baseUrl =
+            BuildConfig.LLMPI_BASE_URL
+
+        val llmpiKey =
+            BuildConfig.LLMPI_API_KEY
+
+        if (baseUrl.isNotBlank() &&
+            !baseUrl.contains("example.invalid")
+        ) {
+            return LLMPIBackend(
+                baseUrl,
+                llmpiKey.ifBlank { null }
+            )
+        }
+
+        return MockBackend()
     }
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
-                CHANNEL_ID, "JAVIS background listening", NotificationManager.IMPORTANCE_LOW
-            )
-            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                CHANNEL_ID,
+                "JAVIS background listening",
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description =
+                    "JAVIS voice assistant background status"
+            }
+
+            val manager =
+                getSystemService(
+                    Context.NOTIFICATION_SERVICE
+                ) as NotificationManager
+
             manager.createNotificationChannel(channel)
         }
     }
 
-    private fun buildNotification(statusText: String): Notification {
-        val openAppIntent = Intent(this, MainActivity::class.java)
-        val pendingIntent = PendingIntent.getActivity(
-            this, 0, openAppIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+    private fun buildNotification(
+        statusText: String
+    ): Notification {
+        val openAppIntent =
+            Intent(this, MainActivity::class.java)
+
+        val pendingIntent =
+            PendingIntent.getActivity(
+                this,
+                0,
+                openAppIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or
+                    PendingIntent.FLAG_IMMUTABLE
+            )
+
+        return NotificationCompat.Builder(
+            this,
+            CHANNEL_ID
         )
-        return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("JAVIS")
             .setContentText(statusText)
             .setSmallIcon(R.mipmap.ic_launcher)
             .setColor(0xFF2FD8FF.toInt())
             .setContentIntent(pendingIntent)
             .setOngoing(true)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setPriority(
+                NotificationCompat.PRIORITY_LOW
+            )
             .build()
     }
 
-    private fun updateNotification(statusText: String) {
-        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        manager.notify(NOTIFICATION_ID, buildNotification(statusText))
+    private fun updateNotification(
+        statusText: String
+    ) {
+        val manager =
+            getSystemService(
+                Context.NOTIFICATION_SERVICE
+            ) as NotificationManager
+
+        manager.notify(
+            NOTIFICATION_ID,
+            buildNotification(statusText)
+        )
     }
 
     companion object {
-        private const val CHANNEL_ID = "javis_wake_word_channel"
+        private const val CHANNEL_ID =
+            "javis_wake_word_channel"
+
         private const val NOTIFICATION_ID = 1001
 
         fun start(context: Context) {
-            val intent = Intent(context, WakeWordService::class.java)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val intent =
+                Intent(context, WakeWordService::class.java)
+
+            if (Build.VERSION.SDK_INT >=
+                Build.VERSION_CODES.O
+            ) {
                 context.startForegroundService(intent)
             } else {
                 context.startService(intent)
@@ -448,7 +973,12 @@ class WakeWordService : Service() {
         }
 
         fun stop(context: Context) {
-            context.stopService(Intent(context, WakeWordService::class.java))
+            context.stopService(
+                Intent(
+                    context,
+                    WakeWordService::class.java
+                )
+            )
         }
     }
 }
