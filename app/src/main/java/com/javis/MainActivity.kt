@@ -1,11 +1,11 @@
 package com.javis
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.content.Intent
-import android.net.Uri
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -17,10 +17,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -38,30 +38,27 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.javis.service.ListeningStatus
 import com.javis.service.WakeWordService
 import com.javis.service.WakeWordServiceState
+import com.javis.ui.JavisThemeId
+import com.javis.ui.JavisThemePalette
+import com.javis.ui.JavisThemeStore
 import com.javis.ui.JavisViewModel
+import com.javis.ui.paletteFor
 import kotlin.math.cos
 import kotlin.math.sin
 
-private val JavisBlue = Color(0xFF45C7FF)
-private val JavisBlueBright = Color(0xFF78E2FF)
-private val JavisViolet = Color(0xFF766CFF)
-private val JavisGreen = Color(0xFF4DE3A2)
-private val JavisBackground = Color(0xFF05070D)
-private val JavisSurface = Color(0xFF0B0F18)
-private val JavisSurface2 = Color(0xFF101621)
-private val JavisText = Color(0xFFF4F7FB)
-private val JavisMuted = Color(0xFF8A95A8)
-
 @Composable
-fun JavisTheme(content: @Composable () -> Unit) {
+fun JavisTheme(
+    palette: JavisThemePalette,
+    content: @Composable () -> Unit
+) {
     MaterialTheme(
         colorScheme = darkColorScheme(
-            primary = JavisBlue,
-            secondary = JavisViolet,
-            background = JavisBackground,
-            surface = JavisSurface,
-            onBackground = JavisText,
-            onSurface = JavisText
+            primary = palette.primary,
+            secondary = palette.secondary,
+            background = palette.background,
+            surface = palette.surface,
+            onBackground = palette.text,
+            onSurface = palette.text
         ),
         content = content
     )
@@ -72,10 +69,14 @@ class MainActivity : ComponentActivity() {
     private val viewModel: JavisViewModel by viewModels()
 
     private val notificationPermissionLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+        registerForActivityResult(
+            ActivityResultContracts.RequestPermission()
+        ) { }
 
     private val micPermissionLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        registerForActivityResult(
+            ActivityResultContracts.RequestPermission()
+        ) { granted ->
             if (granted) WakeWordService.start(this)
         }
 
@@ -96,10 +97,29 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
-            JavisTheme {
+            var selectedTheme by remember {
+                mutableStateOf(
+                    JavisThemeStore.load(this@MainActivity)
+                )
+            }
+
+            val palette = paletteFor(selectedTheme)
+
+            JavisTheme(palette) {
                 JavisApp(
                     viewModel = viewModel,
-                    onToggleListening = { toggleListening() }
+                    palette = palette,
+                    selectedTheme = selectedTheme,
+                    onThemeChange = {
+                        selectedTheme = it
+                        JavisThemeStore.save(
+                            this@MainActivity,
+                            it
+                        )
+                    },
+                    onToggleListening = {
+                        toggleListening()
+                    }
                 )
             }
         }
@@ -111,7 +131,8 @@ class MainActivity : ComponentActivity() {
             return
         }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
+        if (
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
             !Settings.canDrawOverlays(this)
         ) {
             startActivity(
@@ -131,7 +152,9 @@ class MainActivity : ComponentActivity() {
         if (granted) {
             WakeWordService.start(this)
         } else {
-            micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            micPermissionLauncher.launch(
+                Manifest.permission.RECORD_AUDIO
+            )
         }
     }
 
@@ -144,25 +167,33 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun JavisApp(
     viewModel: JavisViewModel,
+    palette: JavisThemePalette,
+    selectedTheme: JavisThemeId,
+    onThemeChange: (JavisThemeId) -> Unit,
     onToggleListening: () -> Unit
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val running by WakeWordServiceState.isRunning.collectAsStateWithLifecycle()
     val status by WakeWordServiceState.status.collectAsStateWithLifecycle()
 
-    var showSettings by remember { mutableStateOf(false) }
+    var showSettings by remember {
+        mutableStateOf(false)
+    }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(JavisBackground)
+            .background(palette.background)
     ) {
-        PremiumBackground()
+        PremiumBackground(palette)
 
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 20.dp, vertical = 18.dp)
+                .padding(
+                    horizontal = 20.dp,
+                    vertical = 18.dp
+                )
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -175,42 +206,56 @@ private fun JavisApp(
                         fontSize = 22.sp,
                         fontWeight = FontWeight.Bold,
                         letterSpacing = 3.sp,
-                        color = JavisText
+                        color = palette.text
                     )
 
                     Text(
                         text = "PERSONAL AI ASSISTANT",
                         fontSize = 9.sp,
                         letterSpacing = 1.7.sp,
-                        color = JavisMuted
+                        color = palette.muted
                     )
                 }
 
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    ConnectionPill(state.hasApiKey)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    ConnectionPill(
+                        connected = state.hasApiKey,
+                        palette = palette
+                    )
 
-                    Spacer(modifier = Modifier.width(6.dp))
+                    Spacer(
+                        modifier = Modifier.width(6.dp)
+                    )
 
                     IconButton(
-                        onClick = { showSettings = true }
+                        onClick = {
+                            showSettings = true
+                        }
                     ) {
-                        Icon(
-                            Icons.Default.Settings,
-                            contentDescription = "Settings",
-                            tint = JavisText
+                        Text(
+                            text = "⚙",
+                            fontSize = 22.sp,
+                            color = palette.text
                         )
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(20.dp))
+            Spacer(
+                modifier = Modifier.height(20.dp)
+            )
 
             PremiumStatusCard(
                 status = status,
-                running = running
+                running = running,
+                palette = palette
             )
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(
+                modifier = Modifier.height(12.dp)
+            )
 
             Box(
                 modifier = Modifier
@@ -220,42 +265,61 @@ private fun JavisApp(
             ) {
                 JavisCore(
                     status = status,
-                    running = running
+                    running = running,
+                    palette = palette
                 )
             }
 
             Text(
-                text = statusText(status, running),
+                text = statusText(
+                    status,
+                    running
+                ),
                 modifier = Modifier.fillMaxWidth(),
                 textAlign = TextAlign.Center,
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Medium,
-                color = JavisText
+                color = palette.text
             )
 
-            Spacer(modifier = Modifier.height(5.dp))
+            Spacer(
+                modifier = Modifier.height(5.dp)
+            )
 
             Text(
-                text = secondaryStatus(status, running),
+                text = secondaryStatus(
+                    status,
+                    running
+                ),
                 modifier = Modifier.fillMaxWidth(),
                 textAlign = TextAlign.Center,
                 fontSize = 12.sp,
-                color = JavisMuted
+                color = palette.muted
             )
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(
+                modifier = Modifier.height(16.dp)
+            )
 
             PremiumMicButton(
                 enabled = running,
+                palette = palette,
                 onClick = onToggleListening
             )
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(
+                modifier = Modifier.height(16.dp)
+            )
 
-            QuickActions()
+            QuickActions(
+                palette = palette
+            )
 
             state.lastError?.let { error ->
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(
+                    modifier = Modifier.height(8.dp)
+                )
+
                 Text(
                     text = error,
                     modifier = Modifier.fillMaxWidth(),
@@ -270,328 +334,393 @@ private fun JavisApp(
     if (showSettings) {
         SettingsDialog(
             viewModel = viewModel,
-            onDismiss = { showSettings = false }
+            palette = palette,
+            selectedTheme = selectedTheme,
+            onThemeChange = onThemeChange,
+            onDismiss = {
+                showSettings = false
+            }
         )
     }
 }
 
 @Composable
-private fun PremiumBackground() {
-    val transition = rememberInfiniteTransition(label = "background")
+private fun PremiumBackground(
+    palette: JavisThemePalette
+) {
+    val infinite = rememberInfiniteTransition(
+        label = "background"
+    )
 
-    val movement by transition.animateFloat(
+    val shift by infinite.animateFloat(
         initialValue = 0f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
-            animation = tween(9000, easing = FastOutSlowInEasing),
+            animation = tween(
+                durationMillis = 9000,
+                easing = LinearEasing
+            ),
             repeatMode = RepeatMode.Reverse
         ),
-        label = "movement"
+        label = "backgroundShift"
     )
 
-    Canvas(modifier = Modifier.fillMaxSize()) {
-        val first = Offset(
-            size.width * (0.20f + movement * 0.08f),
-            size.height * 0.18f
-        )
+    Canvas(
+        modifier = Modifier.fillMaxSize()
+    ) {
+        val w = size.width
+        val h = size.height
 
-        val second = Offset(
-            size.width * 0.82f,
-            size.height * (0.72f - movement * 0.06f)
+        val x1 = w * (0.15f + shift * 0.25f)
+        val y1 = h * (0.12f + shift * 0.12f)
+
+        val x2 = w * (0.90f - shift * 0.25f)
+        val y2 = h * (0.75f - shift * 0.10f)
+
+        drawCircle(
+            brush = Brush.radialGradient(
+                colors = listOf(
+                    palette.primary.copy(alpha = 0.12f),
+                    Color.Transparent
+                ),
+                center = Offset(x1, y1),
+                radius = w * 0.65f
+            ),
+            radius = w * 0.65f,
+            center = Offset(x1, y1)
         )
 
         drawCircle(
             brush = Brush.radialGradient(
                 colors = listOf(
-                    JavisBlue.copy(alpha = 0.12f),
+                    palette.secondary.copy(alpha = 0.10f),
                     Color.Transparent
                 ),
-                center = first,
-                radius = size.width * 0.55f
+                center = Offset(x2, y2),
+                radius = w * 0.60f
             ),
-            radius = size.width * 0.55f,
-            center = first
-        )
-
-        drawCircle(
-            brush = Brush.radialGradient(
-                colors = listOf(
-                    JavisViolet.copy(alpha = 0.10f),
-                    Color.Transparent
-                ),
-                center = second,
-                radius = size.width * 0.60f
-            ),
-            radius = size.width * 0.60f,
-            center = second
+            radius = w * 0.60f,
+            center = Offset(x2, y2)
         )
     }
 }
 
 @Composable
 private fun ConnectionPill(
-    connected: Boolean
+    connected: Boolean,
+    palette: JavisThemePalette
 ) {
-    Row(
-        modifier = Modifier
-            .clip(RoundedCornerShape(50.dp))
-            .background(
-                if (connected)
-                    JavisGreen.copy(alpha = 0.10f)
-                else
-                    Color.White.copy(alpha = 0.05f)
-            )
-            .border(
-                1.dp,
-                if (connected)
-                    JavisGreen.copy(alpha = 0.25f)
-                else
-                    Color.White.copy(alpha = 0.07f),
-                RoundedCornerShape(50.dp)
-            )
-            .padding(horizontal = 10.dp, vertical = 7.dp),
-        verticalAlignment = Alignment.CenterVertically
+    val color = if (connected) {
+        Color(0xFF4DE3A2)
+    } else {
+        palette.muted
+    }
+
+    Surface(
+        shape = RoundedCornerShape(50.dp),
+        color = palette.surface.copy(alpha = 0.88f),
+        border = androidx.compose.foundation.BorderStroke(
+            1.dp,
+            palette.border.copy(alpha = 0.8f)
+        )
     ) {
-        Icon(
-            imageVector = Icons.Default.Settings,
-            contentDescription = null,
-            modifier = Modifier.size(13.dp),
-            tint = if (connected) JavisGreen else JavisMuted
-        )
+        Row(
+            modifier = Modifier.padding(
+                horizontal = 11.dp,
+                vertical = 6.dp
+            ),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(7.dp)
+                    .clip(CircleShape)
+                    .background(color)
+            )
 
-        Spacer(modifier = Modifier.width(5.dp))
+            Spacer(
+                modifier = Modifier.width(6.dp)
+            )
 
-        Text(
-            text = if (connected) "AI READY" else "LOCAL",
-            fontSize = 9.sp,
-            letterSpacing = 0.8.sp,
-            fontWeight = FontWeight.Bold,
-            color = if (connected) JavisGreen else JavisMuted
-        )
+            Text(
+                text = if (connected) "ONLINE" else "LOCAL",
+                fontSize = 9.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.sp,
+                color = palette.text
+            )
+        }
     }
 }
 
 @Composable
 private fun PremiumStatusCard(
     status: ListeningStatus,
-    running: Boolean
+    running: Boolean,
+    palette: JavisThemePalette
 ) {
-    val active = running && status != ListeningStatus.IDLE
+    val title = when {
+        !running -> "JAVIS STANDBY"
+        status == ListeningStatus.LISTENING_FOR_WAKE ->
+            "LISTENING FOR JAVIS"
+        status == ListeningStatus.LISTENING_FOR_COMMAND ->
+            "LISTENING"
+        status == ListeningStatus.THINKING ->
+            "THINKING"
+        status == ListeningStatus.SPEAKING ->
+            "SPEAKING"
+        else -> "READY"
+    }
 
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(18.dp))
-            .background(
-                Brush.horizontalGradient(
-                    listOf(
-                        JavisSurface.copy(alpha = 0.96f),
-                        JavisSurface2.copy(alpha = 0.84f)
-                    )
-                )
-            )
-            .border(
-                1.dp,
-                if (active)
-                    JavisBlue.copy(alpha = 0.28f)
-                else
-                    Color.White.copy(alpha = 0.06f),
-                RoundedCornerShape(18.dp)
-            )
-            .padding(horizontal = 16.dp, vertical = 14.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Box(
-            modifier = Modifier
-                .size(9.dp)
-                .clip(CircleShape)
-                .background(
-                    if (active) JavisGreen else JavisMuted
-                )
+    val detail = when {
+        !running -> "Voice assistant is offline"
+        status == ListeningStatus.LISTENING_FOR_WAKE ->
+            "Say Hey Javis to begin"
+        status == ListeningStatus.LISTENING_FOR_COMMAND ->
+            "Tell me what you need"
+        status == ListeningStatus.THINKING ->
+            "Processing your request"
+        status == ListeningStatus.SPEAKING ->
+            "Javis is responding"
+        else -> "System ready"
+    }
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        color = palette.surface.copy(alpha = 0.88f),
+        border = androidx.compose.foundation.BorderStroke(
+            1.dp,
+            palette.border.copy(alpha = 0.9f)
         )
+    ) {
+        Row(
+            modifier = Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(42.dp)
+                    .clip(CircleShape)
+                    .background(
+                        Brush.radialGradient(
+                            colors = listOf(
+                                palette.primary.copy(alpha = 0.35f),
+                                palette.surface2
+                            )
+                        )
+                    )
+                    .border(
+                        1.dp,
+                        palette.primary.copy(alpha = 0.45f),
+                        CircleShape
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "J",
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = palette.primary
+                )
+            }
 
-        Spacer(modifier = Modifier.width(12.dp))
-
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = if (running)
-                    "Javis is active"
-                else
-                    "Javis is offline",
-                fontSize = 13.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = JavisText
+            Spacer(
+                modifier = Modifier.width(13.dp)
             )
 
-            Text(
-                text = if (running)
-                    "Voice control is ready"
-                else
-                    "Tap the microphone to activate",
-                fontSize = 11.sp,
-                color = JavisMuted
+            Column(
+                modifier = Modifier.weight(1f)
+            ) {
+                Text(
+                    text = title,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.2.sp,
+                    color = palette.text
+                )
+
+                Spacer(
+                    modifier = Modifier.height(3.dp)
+                )
+
+                Text(
+                    text = detail,
+                    fontSize = 11.sp,
+                    color = palette.muted
+                )
+            }
+
+            Box(
+                modifier = Modifier
+                    .size(8.dp)
+                    .clip(CircleShape)
+                    .background(
+                        if (running) palette.primary
+                        else palette.muted
+                    )
             )
         }
-
-        Text(
-            text = statusLabel(status),
-            fontSize = 10.sp,
-            fontWeight = FontWeight.Bold,
-            letterSpacing = 0.8.sp,
-            color = if (active) JavisBlueBright else JavisMuted
-        )
     }
 }
 
 @Composable
 private fun JavisCore(
     status: ListeningStatus,
-    running: Boolean
+    running: Boolean,
+    palette: JavisThemePalette
 ) {
-    val transition = rememberInfiniteTransition(label = "core")
+    val infinite = rememberInfiniteTransition(
+        label = "core"
+    )
 
-    val rotation by transition.animateFloat(
+    val rotation by infinite.animateFloat(
         initialValue = 0f,
         targetValue = 360f,
         animationSpec = infiniteRepeatable(
             animation = tween(
-                durationMillis = 9000,
+                durationMillis = 12000,
                 easing = LinearEasing
-            )
+            ),
+            repeatMode = RepeatMode.Restart
         ),
-        label = "rotation"
+        label = "coreRotation"
     )
 
-    val pulse by transition.animateFloat(
-        initialValue = 0.96f,
-        targetValue = 1.05f,
+    val pulse by infinite.animateFloat(
+        initialValue = 0.92f,
+        targetValue = 1.08f,
         animationSpec = infiniteRepeatable(
-            animation = tween(1800),
+            animation = tween(
+                durationMillis = 1700,
+                easing = FastOutSlowInEasing
+            ),
             repeatMode = RepeatMode.Reverse
         ),
-        label = "pulse"
+        label = "corePulse"
     )
 
-    val active = running && status != ListeningStatus.IDLE
+    val active =
+        running && status != ListeningStatus.IDLE
+
+    val scale =
+        if (active) pulse else 1f
 
     Box(
-        modifier = Modifier
-            .size(280.dp)
-            .graphicsLayer {
-                if (active) {
-                    scaleX = pulse
-                    scaleY = pulse
-                }
-            },
+        modifier = Modifier.size(245.dp),
         contentAlignment = Alignment.Center
     ) {
-
         Canvas(
-            modifier = Modifier.fillMaxSize()
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    rotationZ = rotation
+                    scaleX = scale
+                    scaleY = scale
+                }
         ) {
             val center = Offset(
                 size.width / 2f,
                 size.height / 2f
             )
 
-            if (active) {
-                drawCircle(
-                    brush = Brush.radialGradient(
-                        colors = listOf(
-                            JavisBlue.copy(alpha = 0.22f),
-                            JavisViolet.copy(alpha = 0.07f),
-                            Color.Transparent
-                        ),
-                        center = center,
-                        radius = size.minDimension * 0.48f
-                    ),
-                    radius = size.minDimension * 0.48f,
-                    center = center
-                )
-            }
+            val outerRadius =
+                size.minDimension * 0.45f
 
-            drawCircle(
-                color = Color.White.copy(alpha = 0.035f),
-                radius = size.minDimension * 0.39f,
-                center = center
-            )
+            val tickCount = 36
 
-            drawCircle(
-                color = if (active)
-                    JavisBlue.copy(alpha = 0.55f)
-                else
-                    Color.White.copy(alpha = 0.09f),
-                radius = size.minDimension * 0.37f,
-                center = center,
-                style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2f)
-            )
+            for (i in 0 until tickCount) {
+                val angle =
+                    Math.toRadians(
+                        (i * (360.0 / tickCount))
+                    )
 
-            val radius = size.minDimension * 0.43f
+                val inner =
+                    outerRadius -
+                        if (i % 3 == 0) 8f else 4f
 
-            for (i in 0 until 36) {
-                val angle = Math.toRadians(
-                    (i * 10f + rotation).toDouble()
+                val outer = outerRadius
+
+                val start = Offset(
+                    center.x +
+                        cos(angle).toFloat() * inner,
+                    center.y +
+                        sin(angle).toFloat() * inner
                 )
 
-                val outer = Offset(
-                    center.x + cos(angle).toFloat() * radius,
-                    center.y + sin(angle).toFloat() * radius
-                )
-
-                val innerRadius =
-                    radius -
-                        if (i % 3 == 0)
-                            13.dp.toPx()
-                        else
-                            7.dp.toPx()
-
-                val inner = Offset(
-                    center.x + cos(angle).toFloat() * innerRadius,
-                    center.y + sin(angle).toFloat() * innerRadius
+                val end = Offset(
+                    center.x +
+                        cos(angle).toFloat() * outer,
+                    center.y +
+                        sin(angle).toFloat() * outer
                 )
 
                 drawLine(
-                    color = if (active && i % 3 == 0)
-                        JavisBlueBright.copy(alpha = 0.95f)
-                    else
-                        Color.White.copy(alpha = 0.10f),
-                    start = inner,
-                    end = outer,
+                    color = if (i % 3 == 0) {
+                        palette.primary.copy(
+                            alpha = if (active) 0.75f else 0.30f
+                        )
+                    } else {
+                        palette.border.copy(
+                            alpha = if (active) 0.55f else 0.22f
+                        )
+                    },
+                    start = start,
+                    end = end,
                     strokeWidth =
-                        if (i % 3 == 0)
-                            2.5.dp.toPx()
-                        else
-                            1.dp.toPx()
+                        if (i % 3 == 0) 2.5f else 1.5f,
+                    cap = StrokeCap.Round
+                )
+            }
+        }
+
+        if (active) {
+            Canvas(
+                modifier = Modifier
+                    .size(205.dp)
+                    .graphicsLayer {
+                        alpha = 0.9f
+                    }
+            ) {
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        colors = listOf(
+                            palette.orbGlow.copy(alpha = 0.30f),
+                            palette.secondary.copy(alpha = 0.12f),
+                            Color.Transparent
+                        )
+                    )
                 )
             }
         }
 
         Box(
             modifier = Modifier
-                .size(180.dp)
+                .size(178.dp)
                 .shadow(
-                    elevation = if (active) 32.dp else 14.dp,
+                    elevation = if (active) 28.dp else 14.dp,
                     shape = CircleShape,
-                    ambientColor = JavisBlue,
-                    spotColor = JavisBlue
+                    ambientColor = palette.primary,
+                    spotColor = palette.primary
                 )
                 .clip(CircleShape)
                 .background(
                     Brush.radialGradient(
                         colors = listOf(
-                            Color(0xFF192A40),
-                            Color(0xFF0D1625),
-                            Color(0xFF080C14)
+                            palette.surface2,
+                            palette.surface,
+                            palette.background
                         )
                     )
                 )
                 .border(
-                    width = 1.dp,
+                    width = 2.dp,
                     brush = Brush.linearGradient(
                         colors = listOf(
-                            JavisBlue.copy(alpha = 0.75f),
-                            JavisViolet.copy(alpha = 0.45f),
-                            Color.White.copy(alpha = 0.06f)
+                            palette.primary,
+                            palette.secondary,
+                            palette.border,
+                            palette.primary
                         )
                     ),
                     shape = CircleShape
@@ -603,16 +732,177 @@ private fun JavisCore(
             ) {
                 Text(
                     text = "J",
-                    fontSize = 60.sp,
+                    fontSize = 56.sp,
                     fontWeight = FontWeight.ExtraBold,
-                    color = JavisText
+                    color = palette.text
                 )
 
                 Text(
                     text = "INTELLIGENCE",
                     fontSize = 8.sp,
-                    letterSpacing = 2.2.sp,
-                    color = JavisBlueBright
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 2.4.sp,
+                    color = palette.primary
+                )
+            }
+        }
+    }
+}
+
+
+@Composable
+private fun PremiumMicButton(
+    enabled: Boolean,
+    palette: JavisThemePalette,
+    onClick: () -> Unit
+) {
+    val infinite = rememberInfiniteTransition(
+        label = "mic"
+    )
+
+    val pulse by infinite.animateFloat(
+        initialValue = 0.96f,
+        targetValue = 1.04f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(
+                durationMillis = 1400,
+                easing = FastOutSlowInEasing
+            ),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "micPulse"
+    )
+
+    Box(
+        modifier = Modifier.fillMaxWidth(),
+        contentAlignment = Alignment.Center
+    ) {
+        Box(
+            modifier = Modifier
+                .size(84.dp)
+                .graphicsLayer {
+                    scaleX = if (enabled) pulse else 1f
+                    scaleY = if (enabled) pulse else 1f
+                }
+                .shadow(
+                    elevation = if (enabled) 18.dp else 5.dp,
+                    shape = CircleShape,
+                    ambientColor = palette.primary,
+                    spotColor = palette.primary
+                )
+                .clip(CircleShape)
+                .background(
+                    if (enabled) {
+                        Brush.linearGradient(
+                            colors = listOf(
+                                palette.primary,
+                                palette.secondary
+                            )
+                        )
+                    } else {
+                        Brush.linearGradient(
+                            colors = listOf(
+                                palette.surface2,
+                                palette.surface
+                            )
+                        )
+                    }
+                )
+                .border(
+                    1.dp,
+                    if (enabled) {
+                        palette.primary.copy(alpha = 0.75f)
+                    } else {
+                        palette.border
+                    },
+                    CircleShape
+                )
+                .clickable(
+                    onClick = onClick
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            Canvas(
+                modifier = Modifier.size(34.dp)
+            ) {
+                val centerX = size.width / 2f
+
+                drawRoundRect(
+                    color = if (enabled) {
+                        Color.White
+                    } else {
+                        palette.muted
+                    },
+                    topLeft = Offset(
+                        centerX - 7f,
+                        3f
+                    ),
+                    size = androidx.compose.ui.geometry.Size(
+                        14f,
+                        22f
+                    ),
+                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(
+                        7f,
+                        7f
+                    )
+                )
+
+                drawArc(
+                    color = if (enabled) {
+                        Color.White
+                    } else {
+                        palette.muted
+                    },
+                    startAngle = 0f,
+                    sweepAngle = 180f,
+                    useCenter = false,
+                    topLeft = Offset(
+                        centerX - 12f,
+                        10f
+                    ),
+                    size = androidx.compose.ui.geometry.Size(
+                        24f,
+                        24f
+                    ),
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(
+                        width = 3f
+                    )
+                )
+
+                drawLine(
+                    color = if (enabled) {
+                        Color.White
+                    } else {
+                        palette.muted
+                    },
+                    start = Offset(
+                        centerX,
+                        34f
+                    ),
+                    end = Offset(
+                        centerX,
+                        29f
+                    ),
+                    strokeWidth = 3f,
+                    cap = StrokeCap.Round
+                )
+
+                drawLine(
+                    color = if (enabled) {
+                        Color.White
+                    } else {
+                        palette.muted
+                    },
+                    start = Offset(
+                        centerX - 7f,
+                        36f
+                    ),
+                    end = Offset(
+                        centerX + 7f,
+                        36f
+                    ),
+                    strokeWidth = 3f,
+                    cap = StrokeCap.Round
                 )
             }
         }
@@ -620,167 +910,412 @@ private fun JavisCore(
 }
 
 @Composable
-private fun PremiumMicButton(
-    enabled: Boolean,
-    onClick: () -> Unit
+private fun QuickActions(
+    palette: JavisThemePalette
 ) {
-    Box(
+    Row(
         modifier = Modifier.fillMaxWidth(),
-        contentAlignment = Alignment.Center
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Box(
-            modifier = Modifier
-                .size(78.dp)
-                .shadow(
-                    elevation = if (enabled) 20.dp else 8.dp,
-                    shape = CircleShape
-                )
-                .clip(CircleShape)
-                .background(
-                    if (enabled) {
-                        Brush.linearGradient(
-                            colors = listOf(
-                                JavisBlueBright,
-                                JavisBlue,
-                                JavisViolet
-                            )
-                        )
-                    } else {
-                        Brush.linearGradient(
-                            colors = listOf(
-                                JavisSurface2,
-                                JavisSurface
-                            )
-                        )
-                    }
-                )
-                .border(
-                    1.dp,
-                    Color.White.copy(
-                        alpha = if (enabled) 0.35f else 0.10f
-                    ),
-                    CircleShape
-                )
-                .clickable { onClick() },
-            contentAlignment = Alignment.Center
+        QuickActionCard(
+            modifier = Modifier.weight(1f),
+            title = "VOICE",
+            subtitle = "Talk",
+            symbol = "◉",
+            palette = palette
+        )
+
+        QuickActionCard(
+            modifier = Modifier.weight(1f),
+            title = "ASSIST",
+            subtitle = "Ask",
+            symbol = "✦",
+            palette = palette
+        )
+
+        QuickActionCard(
+            modifier = Modifier.weight(1f),
+            title = "ACTIONS",
+            subtitle = "Control",
+            symbol = "⌁",
+            palette = palette
+        )
+    }
+}
+
+@Composable
+private fun QuickActionCard(
+    modifier: Modifier,
+    title: String,
+    subtitle: String,
+    symbol: String,
+    palette: JavisThemePalette
+) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(16.dp),
+        color = palette.surface.copy(alpha = 0.82f),
+        border = androidx.compose.foundation.BorderStroke(
+            1.dp,
+            palette.border.copy(alpha = 0.85f)
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(
+                horizontal = 10.dp,
+                vertical = 11.dp
+            ),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Icon(
-                imageVector = Icons.Default.Settings,
-                contentDescription = if (enabled)
-                    "Stop listening"
-                else
-                    "Start listening",
-                modifier = Modifier.size(31.dp),
-                tint = if (enabled)
-                    Color.White
-                else
-                    JavisMuted
+            Text(
+                text = symbol,
+                fontSize = 17.sp,
+                color = palette.primary
+            )
+
+            Spacer(
+                modifier = Modifier.height(5.dp)
+            )
+
+            Text(
+                text = title,
+                fontSize = 9.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.sp,
+                color = palette.text
+            )
+
+            Text(
+                text = subtitle,
+                fontSize = 8.sp,
+                color = palette.muted
             )
         }
     }
 }
 
 @Composable
-private fun QuickActions() {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
+private fun ThemeSelector(
+    selectedTheme: JavisThemeId,
+    palette: JavisThemePalette,
+    onThemeChange: (JavisThemeId) -> Unit
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth()
     ) {
-        QuickAction(
-            modifier = Modifier.weight(1f),
-            title = "VOICE",
-            subtitle = "Hey Javis"
+        Text(
+            text = "VISUAL IDENTITY",
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 1.5.sp,
+            color = palette.primary
         )
 
-        QuickAction(
-            modifier = Modifier.weight(1f),
-            title = "ASSIST",
-            subtitle = "Ask anything"
+        Spacer(
+            modifier = Modifier.height(5.dp)
         )
 
-        QuickAction(
-            modifier = Modifier.weight(1f),
-            title = "ACTIONS",
-            subtitle = "Control phone"
+        Text(
+            text = "Choose the Javis interface personality",
+            fontSize = 11.sp,
+            color = palette.muted
         )
+
+        Spacer(
+            modifier = Modifier.height(12.dp)
+        )
+
+        JavisThemeId.values().forEach { theme ->
+            ThemeOption(
+                theme = theme,
+                selected = theme == selectedTheme,
+                palette = palette,
+                onClick = {
+                    onThemeChange(theme)
+                }
+            )
+
+            Spacer(
+                modifier = Modifier.height(7.dp)
+            )
+        }
     }
 }
 
 @Composable
-private fun QuickAction(
-    modifier: Modifier,
-    title: String,
-    subtitle: String
+private fun ThemeOption(
+    theme: JavisThemeId,
+    selected: Boolean,
+    palette: JavisThemePalette,
+    onClick: () -> Unit
 ) {
-    Column(
-        modifier = modifier
-            .clip(RoundedCornerShape(16.dp))
-            .background(
-                Color.White.copy(alpha = 0.035f)
-            )
-            .border(
-                1.dp,
-                Color.White.copy(alpha = 0.07f),
-                RoundedCornerShape(16.dp)
-            )
-            .padding(
-                horizontal = 11.dp,
-                vertical = 12.dp
-            )
+    val themePalette = paletteFor(theme)
+
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(
+                onClick = onClick
+            ),
+        shape = RoundedCornerShape(15.dp),
+        color = if (selected) {
+            themePalette.surface2.copy(alpha = 0.98f)
+        } else {
+            palette.surface.copy(alpha = 0.72f)
+        },
+        border = androidx.compose.foundation.BorderStroke(
+            if (selected) 1.5.dp else 1.dp,
+            if (selected) {
+                themePalette.primary
+            } else {
+                palette.border.copy(alpha = 0.8f)
+            }
+        )
     ) {
-        Text(
-            text = title,
-            fontSize = 10.sp,
-            fontWeight = FontWeight.Bold,
-            letterSpacing = 0.8.sp,
-            color = JavisText
-        )
+        Row(
+            modifier = Modifier.padding(
+                horizontal = 12.dp,
+                vertical = 10.dp
+            ),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(35.dp)
+                    .clip(CircleShape)
+                    .background(
+                        Brush.linearGradient(
+                            colors = listOf(
+                                themePalette.primary,
+                                themePalette.secondary
+                            )
+                        )
+                    )
+                    .border(
+                        1.dp,
+                        themePalette.border,
+                        CircleShape
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "J",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = Color.White
+                )
+            }
 
-        Spacer(modifier = Modifier.height(3.dp))
+            Spacer(
+                modifier = Modifier.width(11.dp)
+            )
 
-        Text(
-            text = subtitle,
-            fontSize = 9.sp,
-            color = JavisMuted
-        )
+            Column(
+                modifier = Modifier.weight(1f)
+            ) {
+                Text(
+                    text = theme.title,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.sp,
+                    color = palette.text
+                )
+
+                Text(
+                    text = theme.description,
+                    fontSize = 9.sp,
+                    color = palette.muted
+                )
+            }
+
+            if (selected) {
+                Box(
+                    modifier = Modifier
+                        .size(9.dp)
+                        .clip(CircleShape)
+                        .background(
+                            themePalette.primary
+                        )
+                )
+            }
+        }
     }
 }
 
-private fun statusLabel(
-    status: ListeningStatus
-): String {
-    return when (status) {
-        ListeningStatus.LISTENING_FOR_WAKE -> "READY"
-        ListeningStatus.LISTENING_FOR_COMMAND -> "LISTENING"
-        ListeningStatus.THINKING -> "THINKING"
-        ListeningStatus.SPEAKING -> "SPEAKING"
-        ListeningStatus.IDLE -> "STANDBY"
+@Composable
+private fun SettingsDialog(
+    viewModel: JavisViewModel,
+    palette: JavisThemePalette,
+    selectedTheme: JavisThemeId,
+    onThemeChange: (JavisThemeId) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val state by viewModel.uiState.collectAsStateWithLifecycle()
+
+    var groqKey by remember {
+        mutableStateOf("")
     }
+
+    var geminiKey by remember {
+        mutableStateOf("")
+    }
+
+    var anthropicKey by remember {
+        mutableStateOf("")
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = palette.surface,
+        title = {
+            Text(
+                text = "JAVIS SETTINGS",
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.5.sp,
+                color = palette.text
+            )
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(
+                        max = 520.dp
+                    )
+            ) {
+                Column(
+                    modifier = Modifier.verticalScroll(
+                        androidx.compose.foundation.rememberScrollState()
+                    )
+                ) {
+                    ThemeSelector(
+                        selectedTheme = selectedTheme,
+                        palette = palette,
+                        onThemeChange = onThemeChange
+                    )
+
+                    Spacer(
+                        modifier = Modifier.height(20.dp)
+                    )
+
+                    Text(
+                        text = "AI PROVIDERS",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.5.sp,
+                        color = palette.primary
+                    )
+
+                    Spacer(
+                        modifier = Modifier.height(10.dp)
+                    )
+
+                    OutlinedTextField(
+                        value = groqKey,
+                        onValueChange = {
+                            groqKey = it
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = {
+                            Text("Groq API Key")
+                        },
+                        singleLine = true
+                    )
+
+                    Spacer(
+                        modifier = Modifier.height(8.dp)
+                    )
+
+                    OutlinedTextField(
+                        value = geminiKey,
+                        onValueChange = {
+                            geminiKey = it
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = {
+                            Text("Gemini API Key")
+                        },
+                        singleLine = true
+                    )
+
+                    Spacer(
+                        modifier = Modifier.height(8.dp)
+                    )
+
+                    OutlinedTextField(
+                        value = anthropicKey,
+                        onValueChange = {
+                            anthropicKey = it
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = {
+                            Text("Anthropic API Key")
+                        },
+                        singleLine = true
+                    )
+
+                    Spacer(
+                        modifier = Modifier.height(10.dp)
+                    )
+
+                    Text(
+                        text = "Provider priority: Groq → Gemini → Anthropic → LLMPI → Local",
+                        fontSize = 10.sp,
+                        color = palette.muted
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    viewModel.saveGroqKey(groqKey)
+                    viewModel.saveGeminiKey(geminiKey)
+                    viewModel.saveApiKey(anthropicKey)
+                    onDismiss()
+                }
+            ) {
+                Text(
+                    text = "SAVE",
+                    color = palette.primary,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onDismiss
+            ) {
+                Text(
+                    text = "CANCEL",
+                    color = palette.muted
+                )
+            }
+        }
+    )
 }
 
 private fun statusText(
     status: ListeningStatus,
     running: Boolean
 ): String {
-    if (!running) {
-        return "Javis is ready when you are"
-    }
+    if (!running) return "Javis is offline"
 
     return when (status) {
+        ListeningStatus.IDLE ->
+            "Ready when you are"
+
         ListeningStatus.LISTENING_FOR_WAKE ->
-            "Say “Hey Javis”"
+            "Listening for your wake word"
 
         ListeningStatus.LISTENING_FOR_COMMAND ->
             "I'm listening"
 
         ListeningStatus.THINKING ->
-            "Let me think"
+            "Thinking..."
 
         ListeningStatus.SPEAKING ->
-            "I'm speaking"
-
-        ListeningStatus.IDLE ->
-            "Starting Javis"
+            "Speaking..."
     }
 }
 
@@ -789,126 +1324,23 @@ private fun secondaryStatus(
     running: Boolean
 ): String {
     if (!running) {
-        return "Tap the microphone to activate voice mode"
+        return "Tap the button to activate voice mode"
     }
 
     return when (status) {
+        ListeningStatus.IDLE ->
+            "Voice session ready"
+
         ListeningStatus.LISTENING_FOR_WAKE ->
-            "You don't need to touch your phone"
+            "Say Hey Javis"
 
         ListeningStatus.LISTENING_FOR_COMMAND ->
-            "Tell me what you need"
+            "Speak naturally — no need to repeat the wake word"
 
         ListeningStatus.THINKING ->
-            "Processing your request"
+            "Connecting intelligence to your request"
 
         ListeningStatus.SPEAKING ->
-            "You can continue the conversation"
-
-        ListeningStatus.IDLE ->
-            "Preparing voice control"
+            "You can interrupt when you need to"
     }
-}
-
-@Composable
-private fun SettingsDialog(
-    viewModel: JavisViewModel,
-    onDismiss: () -> Unit
-) {
-    var groqKey by remember { mutableStateOf("") }
-    var geminiKey by remember { mutableStateOf("") }
-    var anthropicKey by remember { mutableStateOf("") }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        containerColor = JavisSurface,
-        title = {
-            Text(
-                text = "Javis Settings",
-                fontWeight = FontWeight.Bold,
-                color = JavisText
-            )
-        },
-        text = {
-            Column {
-                Text(
-                    text = "AI PROVIDERS",
-                    fontSize = 10.sp,
-                    letterSpacing = 1.5.sp,
-                    color = JavisBlueBright
-                )
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                OutlinedTextField(
-                    value = groqKey,
-                    onValueChange = { groqKey = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Groq API key") },
-                    singleLine = true
-                )
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                OutlinedTextField(
-                    value = geminiKey,
-                    onValueChange = { geminiKey = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Gemini API key") },
-                    singleLine = true
-                )
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                OutlinedTextField(
-                    value = anthropicKey,
-                    onValueChange = { anthropicKey = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Anthropic API key") },
-                    singleLine = true
-                )
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                Text(
-                    text = "Priority: Groq → Gemini → Anthropic",
-                    fontSize = 11.sp,
-                    color = JavisMuted
-                )
-            }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = {
-                    if (groqKey.isNotBlank()) {
-                        viewModel.saveGroqKey(groqKey)
-                    }
-
-                    if (geminiKey.isNotBlank()) {
-                        viewModel.saveGeminiKey(geminiKey)
-                    }
-
-                    if (anthropicKey.isNotBlank()) {
-                        viewModel.saveApiKey(anthropicKey)
-                    }
-
-                    onDismiss()
-                }
-            ) {
-                Text("SAVE")
-            }
-        },
-        dismissButton = {
-            TextButton(
-                onClick = {
-                    viewModel.clearGroqKey()
-                    viewModel.clearGeminiKey()
-                    viewModel.clearApiKey()
-                    onDismiss()
-                }
-            ) {
-                Text("CLEAR")
-            }
-        }
-    )
 }
