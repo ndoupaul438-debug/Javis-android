@@ -481,7 +481,7 @@ class WakeWordService : Service() {
             }
         )
 
-        val intent = RecognizerIntent(
+        val intent = Intent(
             RecognizerIntent.ACTION_RECOGNIZE_SPEECH
         ).apply {
             putExtra(
@@ -698,7 +698,7 @@ class WakeWordService : Service() {
             )
         }
 
-        val intent = RecognizerIntent(
+        val intent = Intent(
             RecognizerIntent.ACTION_RECOGNIZE_SPEECH
         ).apply {
             putExtra(
@@ -865,7 +865,7 @@ class WakeWordService : Service() {
             return GeminiBackend(geminiKey)
         }
 
-        val anthropicKey = store.getAnthropicKey()
+        val anthropicKey = store.getApiKey()
         if (!anthropicKey.isNullOrBlank()) {
             return AnthropicBackend(anthropicKey)
         }
