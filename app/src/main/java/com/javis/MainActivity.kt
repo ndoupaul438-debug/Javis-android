@@ -8,29 +8,24 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.*
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -41,31 +36,59 @@ import com.javis.service.ListeningStatus
 import com.javis.service.WakeWordService
 import com.javis.service.WakeWordServiceState
 import com.javis.ui.JavisViewModel
-import kotlin.random.Random
+import kotlin.math.cos
+import kotlin.math.sin
+
+private val JavisBlue = Color(0xFF45C7FF)
+private val JavisBlueBright = Color(0xFF78E2FF)
+private val JavisViolet = Color(0xFF766CFF)
+private val JavisGreen = Color(0xFF4DE3A2)
+private val JavisBackground = Color(0xFF05070D)
+private val JavisSurface = Color(0xFF0B0F18)
+private val JavisSurface2 = Color(0xFF101621)
+private val JavisText = Color(0xFFF4F7FB)
+private val JavisMuted = Color(0xFF8A95A8)
+
+@Composable
+fun JavisTheme(content: @Composable () -> Unit) {
+    MaterialTheme(
+        colorScheme = darkColorScheme(
+            primary = JavisBlue,
+            secondary = JavisViolet,
+            background = JavisBackground,
+            surface = JavisSurface,
+            onBackground = JavisText,
+            onSurface = JavisText
+        ),
+        content = content
+    )
+}
 
 class MainActivity : ComponentActivity() {
 
     private val viewModel: JavisViewModel by viewModels()
 
-    private val notificationPermissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { /* no-op; the app still works without it, just no reminder notifications */ }
+    private val notificationPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
-    private val micPermissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        if (granted) WakeWordService.start(this)
-    }
+    private val micPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (granted) WakeWordService.start(this)
+        }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             val granted = ContextCompat.checkSelfPermission(
-                this, Manifest.permission.POST_NOTIFICATIONS
+                this,
+                Manifest.permission.POST_NOTIFICATIONS
             ) == PackageManager.PERMISSION_GRANTED
+
             if (!granted) {
-                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                notificationPermissionLauncher.launch(
+                    Manifest.permission.POST_NOTIFICATIONS
+                )
             }
         }
 
@@ -80,18 +103,20 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun toggleListening() {
-        val isRunning = WakeWordServiceState.isRunning.value
-        if (isRunning) {
+        if (WakeWordServiceState.isRunning.value) {
             WakeWordService.stop(this)
+            return
+        }
+
+        val granted = ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.RECORD_AUDIO
+        ) == PackageManager.PERMISSION_GRANTED
+
+        if (granted) {
+            WakeWordService.start(this)
         } else {
-            val granted = ContextCompat.checkSelfPermission(
-                this, Manifest.permission.RECORD_AUDIO
-            ) == PackageManager.PERMISSION_GRANTED
-            if (granted) {
-                WakeWordService.start(this)
-            } else {
-                micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-            }
+            micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
         }
     }
 
@@ -101,345 +126,774 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private val JavisCyan = Color(0xFF2FD8FF)
-private val JavisGreen = Color(0xFF33E08A)
-private val JavisTextDim = Color(0xFF7A9AC0)
-private val SpaceDeep = Color(0xFF02040C)
-private val SpaceMid = Color(0xFF060B1F)
-private val SpacePanel = Color(0xFF0A1226)
-
 @Composable
-fun JavisTheme(content: @Composable () -> Unit) {
-    val colorScheme = darkColorScheme(
-        primary = JavisCyan,
-        background = SpaceDeep,
-        surface = SpacePanel,
-        onBackground = Color(0xFFE8F6FF),
-        onSurface = Color(0xFFE8F6FF),
-    )
-    MaterialTheme(colorScheme = colorScheme, content = content)
-}
+private fun JavisApp(
+    viewModel: JavisViewModel,
+    onToggleListening: () -> Unit
+) {
+    val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val running by WakeWordServiceState.isRunning.collectAsStateWithLifecycle()
+    val status by WakeWordServiceState.status.collectAsStateWithLifecycle()
 
-private data class Star(val x: Float, val y: Float, val radius: Float, val alpha: Float)
+    var showSettings by remember { mutableStateOf(false) }
 
-@Composable
-private fun SpaceBackground() {
-    val stars = remember {
-        List(90) {
-            Star(
-                x = Random.nextFloat(),
-                y = Random.nextFloat(),
-                radius = Random.nextFloat() * 1.6f + 0.4f,
-                alpha = Random.nextFloat() * 0.6f + 0.25f
-            )
-        }
-    }
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(
-                Brush.radialGradient(
-                    colors = listOf(SpaceMid, SpaceDeep),
-                    radius = 1400f
-                )
-            )
+            .background(JavisBackground)
     ) {
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            for (star in stars) {
-                drawCircle(
-                    color = Color.White.copy(alpha = star.alpha),
-                    radius = star.radius.dp.toPx(),
-                    center = Offset(star.x * size.width, star.y * size.height)
-                )
-            }
-        }
-    }
-}
-
-@Composable
-fun JavisApp(viewModel: JavisViewModel, onToggleListening: () -> Unit) {
-    val state by viewModel.uiState.collectAsStateWithLifecycle()
-    val isRunning by WakeWordServiceState.isRunning.collectAsState()
-    val status by WakeWordServiceState.status.collectAsState()
-    var showSettings by remember { mutableStateOf(false) }
-
-    Box(modifier = Modifier.fillMaxSize()) {
-        SpaceBackground()
-
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(20.dp),
-            contentAlignment = Alignment.TopEnd
-        ) {
-            IconButton(onClick = { showSettings = true }) {
-                Text("⚙", color = JavisTextDim, fontSize = 20.sp)
-            }
-        }
+        PremiumBackground()
 
         Column(
-            modifier = Modifier.align(Alignment.Center),
-            horizontalAlignment = Alignment.CenterHorizontally
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 20.dp, vertical = 18.dp)
         ) {
-            AiCoreVisual(status = status)
-            Spacer(Modifier.height(16.dp))
-            Text(
-                text = captionFor(status, isRunning),
-                color = JavisTextDim,
-                fontSize = 13.sp,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.padding(horizontal = 32.dp)
-            )
-            Spacer(Modifier.height(36.dp))
-            MicButton(isRunning = isRunning, status = status, onTap = onToggleListening)
-        }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column {
+                    Text(
+                        text = "JAVIS",
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 3.sp,
+                        color = JavisText
+                    )
 
-        if (state.lastError != null) {
-            Text(
-                state.lastError ?: "",
-                color = Color(0xFFFF6B6B),
-                fontSize = 12.sp,
-                textAlign = TextAlign.Center,
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(24.dp)
+                    Text(
+                        text = "PERSONAL AI ASSISTANT",
+                        fontSize = 9.sp,
+                        letterSpacing = 1.7.sp,
+                        color = JavisMuted
+                    )
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    ConnectionPill(state.hasApiKey)
+
+                    Spacer(modifier = Modifier.width(6.dp))
+
+                    IconButton(
+                        onClick = { showSettings = true }
+                    ) {
+                        Icon(
+                            Icons.Default.Settings,
+                            contentDescription = "Settings",
+                            tint = JavisText
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            PremiumStatusCard(
+                status = status,
+                running = running
             )
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                contentAlignment = Alignment.Center
+            ) {
+                JavisCore(
+                    status = status,
+                    running = running
+                )
+            }
+
+            Text(
+                text = statusText(status, running),
+                modifier = Modifier.fillMaxWidth(),
+                textAlign = TextAlign.Center,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Medium,
+                color = JavisText
+            )
+
+            Spacer(modifier = Modifier.height(5.dp))
+
+            Text(
+                text = secondaryStatus(status, running),
+                modifier = Modifier.fillMaxWidth(),
+                textAlign = TextAlign.Center,
+                fontSize = 12.sp,
+                color = JavisMuted
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            PremiumMicButton(
+                enabled = running,
+                onClick = onToggleListening
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            QuickActions()
+
+            state.lastError?.let { error ->
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = error,
+                    modifier = Modifier.fillMaxWidth(),
+                    textAlign = TextAlign.Center,
+                    color = MaterialTheme.colorScheme.error,
+                    fontSize = 11.sp
+                )
+            }
         }
     }
 
     if (showSettings) {
         SettingsDialog(
-            hasApiKey = state.hasApiKey,
-            onSaveGroq = { key -> viewModel.saveGroqKey(key) },
-            onClearGroq = { viewModel.clearGroqKey() },
-            onSaveGemini = { key -> viewModel.saveGeminiKey(key) },
-            onClearGemini = { viewModel.clearGeminiKey() },
-            onSaveAnthropic = { key -> viewModel.saveApiKey(key) },
-            onClearAnthropic = { viewModel.clearApiKey() },
+            viewModel = viewModel,
             onDismiss = { showSettings = false }
         )
     }
 }
 
-private fun captionFor(status: ListeningStatus, isRunning: Boolean): String = when (status) {
-    ListeningStatus.LISTENING_FOR_WAKE -> "Say \"Hey Javis\" any time"
-    ListeningStatus.LISTENING_FOR_COMMAND -> "Listening..."
-    ListeningStatus.THINKING -> "Thinking..."
-    ListeningStatus.SPEAKING -> "Speaking..."
-    ListeningStatus.IDLE -> if (isRunning) "Starting..." else "Tap the mic to start listening"
-}
-
 @Composable
-private fun AiCoreVisual(status: ListeningStatus) {
-    val ringColor by animateColorAsState(
-        targetValue = when (status) {
-            ListeningStatus.LISTENING_FOR_COMMAND -> JavisGreen
-            ListeningStatus.THINKING -> JavisCyan
-            ListeningStatus.SPEAKING -> JavisGreen
-            else -> JavisCyan.copy(alpha = 0.55f)
-        },
-        animationSpec = tween(400),
-        label = "ringColor"
-    )
+private fun PremiumBackground() {
+    val transition = rememberInfiniteTransition(label = "background")
 
-    val infiniteTransition = rememberInfiniteTransition(label = "aiCore")
-
-    val rotation by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(animation = tween(7000, easing = LinearEasing)),
-        label = "rotation"
-    )
-
-    val pulse by infiniteTransition.animateFloat(
+    val movement by transition.animateFloat(
         initialValue = 0f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
-            animation = tween(900, easing = FastOutSlowInEasing),
+            animation = tween(9000, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "movement"
+    )
+
+    Canvas(modifier = Modifier.fillMaxSize()) {
+        val first = Offset(
+            size.width * (0.20f + movement * 0.08f),
+            size.height * 0.18f
+        )
+
+        val second = Offset(
+            size.width * 0.82f,
+            size.height * (0.72f - movement * 0.06f)
+        )
+
+        drawCircle(
+            brush = Brush.radialGradient(
+                colors = listOf(
+                    JavisBlue.copy(alpha = 0.12f),
+                    Color.Transparent
+                ),
+                center = first,
+                radius = size.width * 0.55f
+            ),
+            radius = size.width * 0.55f,
+            center = first
+        )
+
+        drawCircle(
+            brush = Brush.radialGradient(
+                colors = listOf(
+                    JavisViolet.copy(alpha = 0.10f),
+                    Color.Transparent
+                ),
+                center = second,
+                radius = size.width * 0.60f
+            ),
+            radius = size.width * 0.60f,
+            center = second
+        )
+    }
+}
+
+@Composable
+private fun ConnectionPill(
+    connected: Boolean
+) {
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(50.dp))
+            .background(
+                if (connected)
+                    JavisGreen.copy(alpha = 0.10f)
+                else
+                    Color.White.copy(alpha = 0.05f)
+            )
+            .border(
+                1.dp,
+                if (connected)
+                    JavisGreen.copy(alpha = 0.25f)
+                else
+                    Color.White.copy(alpha = 0.07f),
+                RoundedCornerShape(50.dp)
+            )
+            .padding(horizontal = 10.dp, vertical = 7.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = Icons.Default.Settings,
+            contentDescription = null,
+            modifier = Modifier.size(13.dp),
+            tint = if (connected) JavisGreen else JavisMuted
+        )
+
+        Spacer(modifier = Modifier.width(5.dp))
+
+        Text(
+            text = if (connected) "AI READY" else "LOCAL",
+            fontSize = 9.sp,
+            letterSpacing = 0.8.sp,
+            fontWeight = FontWeight.Bold,
+            color = if (connected) JavisGreen else JavisMuted
+        )
+    }
+}
+
+@Composable
+private fun PremiumStatusCard(
+    status: ListeningStatus,
+    running: Boolean
+) {
+    val active = running && status != ListeningStatus.IDLE
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(18.dp))
+            .background(
+                Brush.horizontalGradient(
+                    listOf(
+                        JavisSurface.copy(alpha = 0.96f),
+                        JavisSurface2.copy(alpha = 0.84f)
+                    )
+                )
+            )
+            .border(
+                1.dp,
+                if (active)
+                    JavisBlue.copy(alpha = 0.28f)
+                else
+                    Color.White.copy(alpha = 0.06f),
+                RoundedCornerShape(18.dp)
+            )
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(9.dp)
+                .clip(CircleShape)
+                .background(
+                    if (active) JavisGreen else JavisMuted
+                )
+        )
+
+        Spacer(modifier = Modifier.width(12.dp))
+
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = if (running)
+                    "Javis is active"
+                else
+                    "Javis is offline",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = JavisText
+            )
+
+            Text(
+                text = if (running)
+                    "Voice control is ready"
+                else
+                    "Tap the microphone to activate",
+                fontSize = 11.sp,
+                color = JavisMuted
+            )
+        }
+
+        Text(
+            text = statusLabel(status),
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 0.8.sp,
+            color = if (active) JavisBlueBright else JavisMuted
+        )
+    }
+}
+
+@Composable
+private fun JavisCore(
+    status: ListeningStatus,
+    running: Boolean
+) {
+    val transition = rememberInfiniteTransition(label = "core")
+
+    val rotation by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(
+                durationMillis = 9000,
+                easing = LinearEasing
+            )
+        ),
+        label = "rotation"
+    )
+
+    val pulse by transition.animateFloat(
+        initialValue = 0.96f,
+        targetValue = 1.05f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1800),
             repeatMode = RepeatMode.Reverse
         ),
         label = "pulse"
     )
 
-    val active = status != ListeningStatus.IDLE
-    val amplitude = if (active) 1f else 0.15f
-    val innerScale = 1f + (pulse * 0.07f * amplitude)
-    val glowAlpha = 0.14f + (pulse * 0.2f * amplitude)
+    val active = running && status != ListeningStatus.IDLE
 
     Box(
-        modifier = Modifier.size(190.dp),
+        modifier = Modifier
+            .size(280.dp)
+            .graphicsLayer {
+                if (active) {
+                    scaleX = pulse
+                    scaleY = pulse
+                }
+            },
         contentAlignment = Alignment.Center
     ) {
+
         Canvas(
-            modifier = Modifier
-                .size(190.dp)
-                .graphicsLayer { rotationZ = rotation }
+            modifier = Modifier.fillMaxSize()
         ) {
-            val segments = 28
-            val gapDegrees = 4.5f
-            val segmentDegrees = (360f / segments) - gapDegrees
-            for (i in 0 until segments) {
-                val startAngle = i * (360f / segments)
-                val alpha = 0.2f + (i % 4) * 0.13f
-                drawArc(
-                    color = ringColor.copy(alpha = alpha),
-                    startAngle = startAngle,
-                    sweepAngle = segmentDegrees,
-                    useCenter = false,
-                    style = Stroke(width = 2.5.dp.toPx())
+            val center = Offset(
+                size.width / 2f,
+                size.height / 2f
+            )
+
+            if (active) {
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        colors = listOf(
+                            JavisBlue.copy(alpha = 0.22f),
+                            JavisViolet.copy(alpha = 0.07f),
+                            Color.Transparent
+                        ),
+                        center = center,
+                        radius = size.minDimension * 0.48f
+                    ),
+                    radius = size.minDimension * 0.48f,
+                    center = center
+                )
+            }
+
+            drawCircle(
+                color = Color.White.copy(alpha = 0.035f),
+                radius = size.minDimension * 0.39f,
+                center = center
+            )
+
+            drawCircle(
+                color = if (active)
+                    JavisBlue.copy(alpha = 0.55f)
+                else
+                    Color.White.copy(alpha = 0.09f),
+                radius = size.minDimension * 0.37f,
+                center = center,
+                style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2f)
+            )
+
+            val radius = size.minDimension * 0.43f
+
+            for (i in 0 until 36) {
+                val angle = Math.toRadians(
+                    (i * 10f + rotation).toDouble()
+                )
+
+                val outer = Offset(
+                    center.x + cos(angle).toFloat() * radius,
+                    center.y + sin(angle).toFloat() * radius
+                )
+
+                val innerRadius =
+                    radius -
+                        if (i % 3 == 0)
+                            13.dp.toPx()
+                        else
+                            7.dp.toPx()
+
+                val inner = Offset(
+                    center.x + cos(angle).toFloat() * innerRadius,
+                    center.y + sin(angle).toFloat() * innerRadius
+                )
+
+                drawLine(
+                    color = if (active && i % 3 == 0)
+                        JavisBlueBright.copy(alpha = 0.95f)
+                    else
+                        Color.White.copy(alpha = 0.10f),
+                    start = inner,
+                    end = outer,
+                    strokeWidth =
+                        if (i % 3 == 0)
+                            2.5.dp.toPx()
+                        else
+                            1.dp.toPx()
                 )
             }
         }
 
         Box(
             modifier = Modifier
-                .size(150.dp)
+                .size(180.dp)
+                .shadow(
+                    elevation = if (active) 32.dp else 14.dp,
+                    shape = CircleShape,
+                    ambientColor = JavisBlue,
+                    spotColor = JavisBlue
+                )
                 .clip(CircleShape)
-                .background(ringColor.copy(alpha = glowAlpha))
-        )
-
-        Box(
-            modifier = Modifier
-                .size(120.dp)
-                .graphicsLayer { scaleX = innerScale; scaleY = innerScale }
-                .clip(CircleShape)
-                .background(SpacePanel)
-                .border(2.dp, ringColor, CircleShape),
+                .background(
+                    Brush.radialGradient(
+                        colors = listOf(
+                            Color(0xFF192A40),
+                            Color(0xFF0D1625),
+                            Color(0xFF080C14)
+                        )
+                    )
+                )
+                .border(
+                    width = 1.dp,
+                    brush = Brush.linearGradient(
+                        colors = listOf(
+                            JavisBlue.copy(alpha = 0.75f),
+                            JavisViolet.copy(alpha = 0.45f),
+                            Color.White.copy(alpha = 0.06f)
+                        )
+                    ),
+                    shape = CircleShape
+                ),
             contentAlignment = Alignment.Center
         ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("JAVIS", color = ringColor, fontSize = 17.sp, fontWeight = FontWeight.Bold)
-                Text("AI CORE", color = JavisTextDim, fontSize = 9.sp)
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = "J",
+                    fontSize = 60.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = JavisText
+                )
+
+                Text(
+                    text = "INTELLIGENCE",
+                    fontSize = 8.sp,
+                    letterSpacing = 2.2.sp,
+                    color = JavisBlueBright
+                )
             }
         }
     }
 }
 
 @Composable
-private fun MicButton(isRunning: Boolean, status: ListeningStatus, onTap: () -> Unit) {
-    val micColor = when {
-        status == ListeningStatus.LISTENING_FOR_COMMAND -> JavisGreen
-        isRunning -> JavisCyan
-        else -> JavisTextDim
-    }
+private fun PremiumMicButton(
+    enabled: Boolean,
+    onClick: () -> Unit
+) {
     Box(
-        modifier = Modifier
-            .size(72.dp)
-            .clip(CircleShape)
-            .background(if (isRunning) micColor.copy(alpha = 0.15f) else SpacePanel)
-            .border(2.dp, micColor, CircleShape),
+        modifier = Modifier.fillMaxWidth(),
         contentAlignment = Alignment.Center
     ) {
-        IconButton(onClick = onTap) {
-            Text("🎤", fontSize = 28.sp)
+        Box(
+            modifier = Modifier
+                .size(78.dp)
+                .shadow(
+                    elevation = if (enabled) 20.dp else 8.dp,
+                    shape = CircleShape
+                )
+                .clip(CircleShape)
+                .background(
+                    if (enabled) {
+                        Brush.linearGradient(
+                            colors = listOf(
+                                JavisBlueBright,
+                                JavisBlue,
+                                JavisViolet
+                            )
+                        )
+                    } else {
+                        Brush.linearGradient(
+                            colors = listOf(
+                                JavisSurface2,
+                                JavisSurface
+                            )
+                        )
+                    }
+                )
+                .border(
+                    1.dp,
+                    Color.White.copy(
+                        alpha = if (enabled) 0.35f else 0.10f
+                    ),
+                    CircleShape
+                )
+                .clickable { onClick() },
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.Default.Settings,
+                contentDescription = if (enabled)
+                    "Stop listening"
+                else
+                    "Start listening",
+                modifier = Modifier.size(31.dp),
+                tint = if (enabled)
+                    Color.White
+                else
+                    JavisMuted
+            )
         }
+    }
+}
+
+@Composable
+private fun QuickActions() {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        QuickAction(
+            modifier = Modifier.weight(1f),
+            title = "VOICE",
+            subtitle = "Hey Javis"
+        )
+
+        QuickAction(
+            modifier = Modifier.weight(1f),
+            title = "ASSIST",
+            subtitle = "Ask anything"
+        )
+
+        QuickAction(
+            modifier = Modifier.weight(1f),
+            title = "ACTIONS",
+            subtitle = "Control phone"
+        )
+    }
+}
+
+@Composable
+private fun QuickAction(
+    modifier: Modifier,
+    title: String,
+    subtitle: String
+) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(
+                Color.White.copy(alpha = 0.035f)
+            )
+            .border(
+                1.dp,
+                Color.White.copy(alpha = 0.07f),
+                RoundedCornerShape(16.dp)
+            )
+            .padding(
+                horizontal = 11.dp,
+                vertical = 12.dp
+            )
+    ) {
+        Text(
+            text = title,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 0.8.sp,
+            color = JavisText
+        )
+
+        Spacer(modifier = Modifier.height(3.dp))
+
+        Text(
+            text = subtitle,
+            fontSize = 9.sp,
+            color = JavisMuted
+        )
+    }
+}
+
+private fun statusLabel(
+    status: ListeningStatus
+): String {
+    return when (status) {
+        ListeningStatus.LISTENING_FOR_WAKE -> "READY"
+        ListeningStatus.LISTENING_FOR_COMMAND -> "LISTENING"
+        ListeningStatus.THINKING -> "THINKING"
+        ListeningStatus.SPEAKING -> "SPEAKING"
+        ListeningStatus.IDLE -> "STANDBY"
+    }
+}
+
+private fun statusText(
+    status: ListeningStatus,
+    running: Boolean
+): String {
+    if (!running) {
+        return "Javis is ready when you are"
+    }
+
+    return when (status) {
+        ListeningStatus.LISTENING_FOR_WAKE ->
+            "Say “Hey Javis”"
+
+        ListeningStatus.LISTENING_FOR_COMMAND ->
+            "I'm listening"
+
+        ListeningStatus.THINKING ->
+            "Let me think"
+
+        ListeningStatus.SPEAKING ->
+            "I'm speaking"
+
+        ListeningStatus.IDLE ->
+            "Starting Javis"
+    }
+}
+
+private fun secondaryStatus(
+    status: ListeningStatus,
+    running: Boolean
+): String {
+    if (!running) {
+        return "Tap the microphone to activate voice mode"
+    }
+
+    return when (status) {
+        ListeningStatus.LISTENING_FOR_WAKE ->
+            "You don't need to touch your phone"
+
+        ListeningStatus.LISTENING_FOR_COMMAND ->
+            "Tell me what you need"
+
+        ListeningStatus.THINKING ->
+            "Processing your request"
+
+        ListeningStatus.SPEAKING ->
+            "You can continue the conversation"
+
+        ListeningStatus.IDLE ->
+            "Preparing voice control"
     }
 }
 
 @Composable
 private fun SettingsDialog(
-    hasApiKey: Boolean,
-    onSaveGroq: (String) -> Unit,
-    onClearGroq: () -> Unit,
-    onSaveGemini: (String) -> Unit,
-    onClearGemini: () -> Unit,
-    onSaveAnthropic: (String) -> Unit,
-    onClearAnthropic: () -> Unit,
+    viewModel: JavisViewModel,
     onDismiss: () -> Unit
 ) {
-    var groqInput by remember { mutableStateOf("") }
-    var geminiInput by remember { mutableStateOf("") }
-    var anthropicInput by remember { mutableStateOf("") }
+    var groqKey by remember { mutableStateOf("") }
+    var geminiKey by remember { mutableStateOf("") }
+    var anthropicKey by remember { mutableStateOf("") }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("JAVIS Settings") },
+        containerColor = JavisSurface,
+        title = {
+            Text(
+                text = "Javis Settings",
+                fontWeight = FontWeight.Bold,
+                color = JavisText
+            )
+        },
         text = {
             Column {
-                Text("Groq (free, no card needed)", color = JavisGreen, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                Text("Get a free key at console.groq.com", color = JavisTextDim, fontSize = 11.sp)
-                Spacer(Modifier.height(6.dp))
-                OutlinedTextField(
-                    value = groqInput,
-                    onValueChange = { groqInput = it },
-                    placeholder = { Text("gsk_...", color = JavisTextDim) },
-                    singleLine = true,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = JavisGreen,
-                        unfocusedBorderColor = Color(0xFF163049),
-                        focusedTextColor = Color(0xFFE8F6FF),
-                        unfocusedTextColor = Color(0xFFE8F6FF),
-                    )
-                )
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    TextButton(onClick = onClearGroq) { Text("Clear", color = Color(0xFFFF6B6B), fontSize = 12.sp) }
-                    TextButton(
-                        onClick = { if (groqInput.isNotBlank()) onSaveGroq(groqInput) },
-                        enabled = groqInput.isNotBlank()
-                    ) { Text("Save", color = JavisGreen, fontSize = 12.sp) }
-                }
-
-                Spacer(Modifier.height(10.dp))
-                Text("Gemini (free, may be region-locked)", color = JavisCyan, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                Text("Get a free key at aistudio.google.com/apikey", color = JavisTextDim, fontSize = 11.sp)
-                Spacer(Modifier.height(6.dp))
-                OutlinedTextField(
-                    value = geminiInput,
-                    onValueChange = { geminiInput = it },
-                    placeholder = { Text("Paste Gemini key", color = JavisTextDim) },
-                    singleLine = true,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = JavisCyan,
-                        unfocusedBorderColor = Color(0xFF163049),
-                        focusedTextColor = Color(0xFFE8F6FF),
-                        unfocusedTextColor = Color(0xFFE8F6FF),
-                    )
-                )
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    TextButton(onClick = onClearGemini) { Text("Clear", color = Color(0xFFFF6B6B), fontSize = 12.sp) }
-                    TextButton(
-                        onClick = { if (geminiInput.isNotBlank()) onSaveGemini(geminiInput) },
-                        enabled = geminiInput.isNotBlank()
-                    ) { Text("Save", color = JavisCyan, fontSize = 12.sp) }
-                }
-
-                Spacer(Modifier.height(10.dp))
-                Text("Anthropic (paid, pay-per-use)", color = JavisTextDim, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                Text("Get a key at console.anthropic.com", color = JavisTextDim, fontSize = 11.sp)
-                Spacer(Modifier.height(6.dp))
-                OutlinedTextField(
-                    value = anthropicInput,
-                    onValueChange = { anthropicInput = it },
-                    placeholder = { Text("sk-ant-...", color = JavisTextDim) },
-                    singleLine = true,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = JavisCyan,
-                        unfocusedBorderColor = Color(0xFF163049),
-                        focusedTextColor = Color(0xFFE8F6FF),
-                        unfocusedTextColor = Color(0xFFE8F6FF),
-                    )
-                )
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    TextButton(onClick = onClearAnthropic) { Text("Clear", color = Color(0xFFFF6B6B), fontSize = 12.sp) }
-                    TextButton(
-                        onClick = { if (anthropicInput.isNotBlank()) onSaveAnthropic(anthropicInput) },
-                        enabled = anthropicInput.isNotBlank()
-                    ) { Text("Save", color = JavisTextDim, fontSize = 12.sp) }
-                }
-
-                Spacer(Modifier.height(8.dp))
                 Text(
-                    "Priority if more than one is set: Groq, then Gemini, then Anthropic.",
-                    color = JavisTextDim,
-                    fontSize = 10.sp
+                    text = "AI PROVIDERS",
+                    fontSize = 10.sp,
+                    letterSpacing = 1.5.sp,
+                    color = JavisBlueBright
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                OutlinedTextField(
+                    value = groqKey,
+                    onValueChange = { groqKey = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Groq API key") },
+                    singleLine = true
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                OutlinedTextField(
+                    value = geminiKey,
+                    onValueChange = { geminiKey = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Gemini API key") },
+                    singleLine = true
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                OutlinedTextField(
+                    value = anthropicKey,
+                    onValueChange = { anthropicKey = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Anthropic API key") },
+                    singleLine = true
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Text(
+                    text = "Priority: Groq → Gemini → Anthropic",
+                    fontSize = 11.sp,
+                    color = JavisMuted
                 )
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss) { Text("Done", color = JavisCyan) }
+            TextButton(
+                onClick = {
+                    if (groqKey.isNotBlank()) {
+                        viewModel.saveGroqKey(groqKey)
+                    }
+
+                    if (geminiKey.isNotBlank()) {
+                        viewModel.saveGeminiKey(geminiKey)
+                    }
+
+                    if (anthropicKey.isNotBlank()) {
+                        viewModel.saveApiKey(anthropicKey)
+                    }
+
+                    onDismiss()
+                }
+            ) {
+                Text("SAVE")
+            }
         },
-        containerColor = SpacePanel,
-        titleContentColor = Color(0xFFE8F6FF),
-        textContentColor = Color(0xFFE8F6FF),
+        dismissButton = {
+            TextButton(
+                onClick = {
+                    viewModel.clearGroqKey()
+                    viewModel.clearGeminiKey()
+                    viewModel.clearApiKey()
+                    onDismiss()
+                }
+            ) {
+                Text("CLEAR")
+            }
+        }
     )
 }
