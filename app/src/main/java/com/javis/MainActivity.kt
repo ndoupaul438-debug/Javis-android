@@ -176,9 +176,7 @@ private fun JavisApp(
     val running by WakeWordServiceState.isRunning.collectAsStateWithLifecycle()
     val status by WakeWordServiceState.status.collectAsStateWithLifecycle()
 
-    var showSettings by remember {
-        mutableStateOf(false)
-    }
+    var showSettings by remember { mutableStateOf(false) }
 
     Box(
         modifier = Modifier
@@ -190,10 +188,7 @@ private fun JavisApp(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(
-                    horizontal = 20.dp,
-                    vertical = 18.dp
-                )
+                .padding(horizontal = 18.dp, vertical = 14.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -203,49 +198,41 @@ private fun JavisApp(
                 Column {
                     Text(
                         text = "JAVIS",
-                        fontSize = 22.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 3.sp,
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        letterSpacing = 4.sp,
                         color = palette.text
                     )
 
                     Text(
-                        text = "PERSONAL AI ASSISTANT",
-                        fontSize = 9.sp,
-                        letterSpacing = 1.7.sp,
-                        color = palette.muted
+                        text = "INTELLIGENCE CORE",
+                        fontSize = 8.sp,
+                        letterSpacing = 2.2.sp,
+                        color = palette.primary
                     )
                 }
 
-                Row(
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     ConnectionPill(
                         connected = state.hasApiKey,
                         palette = palette
                     )
 
-                    Spacer(
-                        modifier = Modifier.width(6.dp)
-                    )
+                    Spacer(modifier = Modifier.width(4.dp))
 
                     IconButton(
-                        onClick = {
-                            showSettings = true
-                        }
+                        onClick = { showSettings = true }
                     ) {
                         Text(
                             text = "⚙",
-                            fontSize = 22.sp,
+                            fontSize = 21.sp,
                             color = palette.text
                         )
                     }
                 }
             }
 
-            Spacer(
-                modifier = Modifier.height(20.dp)
-            )
+            Spacer(modifier = Modifier.height(14.dp))
 
             PremiumStatusCard(
                 status = status,
@@ -253,9 +240,7 @@ private fun JavisApp(
                 palette = palette
             )
 
-            Spacer(
-                modifier = Modifier.height(12.dp)
-            )
+            Spacer(modifier = Modifier.height(6.dp))
 
             Box(
                 modifier = Modifier
@@ -271,35 +256,25 @@ private fun JavisApp(
             }
 
             Text(
-                text = statusText(
-                    status,
-                    running
-                ),
+                text = statusText(status, running),
                 modifier = Modifier.fillMaxWidth(),
                 textAlign = TextAlign.Center,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Medium,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.SemiBold,
                 color = palette.text
             )
 
-            Spacer(
-                modifier = Modifier.height(5.dp)
-            )
+            Spacer(modifier = Modifier.height(4.dp))
 
             Text(
-                text = secondaryStatus(
-                    status,
-                    running
-                ),
+                text = secondaryStatus(status, running),
                 modifier = Modifier.fillMaxWidth(),
                 textAlign = TextAlign.Center,
-                fontSize = 12.sp,
+                fontSize = 11.sp,
                 color = palette.muted
             )
 
-            Spacer(
-                modifier = Modifier.height(16.dp)
-            )
+            Spacer(modifier = Modifier.height(12.dp))
 
             PremiumMicButton(
                 enabled = running,
@@ -307,25 +282,19 @@ private fun JavisApp(
                 onClick = onToggleListening
             )
 
-            Spacer(
-                modifier = Modifier.height(16.dp)
-            )
+            Spacer(modifier = Modifier.height(12.dp))
 
-            QuickActions(
-                palette = palette
-            )
+            QuickActions(palette)
 
             state.lastError?.let { error ->
-                Spacer(
-                    modifier = Modifier.height(8.dp)
-                )
+                Spacer(modifier = Modifier.height(6.dp))
 
                 Text(
                     text = error,
                     modifier = Modifier.fillMaxWidth(),
                     textAlign = TextAlign.Center,
                     color = MaterialTheme.colorScheme.error,
-                    fontSize = 11.sp
+                    fontSize = 10.sp
                 )
             }
         }
@@ -337,9 +306,7 @@ private fun JavisApp(
             palette = palette,
             selectedTheme = selectedTheme,
             onThemeChange = onThemeChange,
-            onDismiss = {
-                showSettings = false
-            }
+            onDismiss = { showSettings = false }
         )
     }
 }
@@ -570,185 +537,217 @@ private fun JavisCore(
     running: Boolean,
     palette: JavisThemePalette
 ) {
-    val infinite = rememberInfiniteTransition(
-        label = "core"
-    )
+    val infinite = rememberInfiniteTransition(label = "javisCore")
 
     val rotation by infinite.animateFloat(
         initialValue = 0f,
         targetValue = 360f,
         animationSpec = infiniteRepeatable(
-            animation = tween(
-                durationMillis = 12000,
-                easing = LinearEasing
-            ),
+            animation = tween(14000, easing = LinearEasing),
             repeatMode = RepeatMode.Restart
         ),
-        label = "coreRotation"
+        label = "rotation"
     )
 
     val pulse by infinite.animateFloat(
-        initialValue = 0.92f,
-        targetValue = 1.08f,
+        initialValue = 0.96f,
+        targetValue = 1.07f,
         animationSpec = infiniteRepeatable(
-            animation = tween(
-                durationMillis = 1700,
-                easing = FastOutSlowInEasing
-            ),
+            animation = tween(1250, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
         ),
-        label = "corePulse"
+        label = "pulse"
     )
 
-    val active =
-        running && status != ListeningStatus.IDLE
+    val energy by infinite.animateFloat(
+        initialValue = 0.25f,
+        targetValue = 0.75f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1100, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "energy"
+    )
 
-    val scale =
-        if (active) pulse else 1f
+    val active = running && status != ListeningStatus.IDLE
+    val thinking = status == ListeningStatus.THINKING
+    val speaking = status == ListeningStatus.SPEAKING
+    val listening =
+        status == ListeningStatus.LISTENING_FOR_WAKE ||
+        status == ListeningStatus.LISTENING_FOR_COMMAND
+
+    val stateColor = when {
+        thinking -> palette.secondary
+        speaking -> palette.accent
+        listening -> palette.primary
+        running -> palette.primary
+        else -> palette.muted
+    }
+
+    val stateScale = when {
+        active -> pulse
+        else -> 1f
+    }
 
     Box(
-        modifier = Modifier.size(245.dp),
+        modifier = Modifier
+            .size(280.dp)
+            .graphicsLayer {
+                scaleX = stateScale
+                scaleY = stateScale
+            },
         contentAlignment = Alignment.Center
     ) {
         Canvas(
-            modifier = Modifier
-                .fillMaxSize()
-                .graphicsLayer {
-                    rotationZ = rotation
-                    scaleX = scale
-                    scaleY = scale
-                }
+            modifier = Modifier.fillMaxSize()
         ) {
-            val center = Offset(
-                size.width / 2f,
-                size.height / 2f
+            val center = Offset(size.width / 2f, size.height / 2f)
+            val base = size.minDimension * 0.19f
+            val outer = size.minDimension * 0.45f
+
+            // Deep ambient energy field.
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(
+                        stateColor.copy(alpha = 0.22f + energy * 0.10f),
+                        stateColor.copy(alpha = 0.07f),
+                        Color.Transparent
+                    ),
+                    center = center,
+                    radius = outer * 1.45f
+                ),
+                radius = outer * 1.45f,
+                center = center
             )
 
-            val outerRadius =
-                size.minDimension * 0.45f
-
-            val tickCount = 36
-
-            for (i in 0 until tickCount) {
-                val angle =
-                    Math.toRadians(
-                        (i * (360.0 / tickCount))
-                    )
-
-                val inner =
-                    outerRadius -
-                        if (i % 3 == 0) 8f else 4f
-
-                val outer = outerRadius
-
-                val start = Offset(
-                    center.x +
-                        cos(angle).toFloat() * inner,
-                    center.y +
-                        sin(angle).toFloat() * inner
-                )
-
-                val end = Offset(
-                    center.x +
-                        cos(angle).toFloat() * outer,
-                    center.y +
-                        sin(angle).toFloat() * outer
-                )
-
-                drawLine(
-                    color = if (i % 3 == 0) {
-                        palette.primary.copy(
-                            alpha = if (active) 0.75f else 0.30f
-                        )
-                    } else {
-                        palette.border.copy(
-                            alpha = if (active) 0.55f else 0.22f
-                        )
-                    },
-                    start = start,
-                    end = end,
-                    strokeWidth =
-                        if (i % 3 == 0) 2.5f else 1.5f,
-                    cap = StrokeCap.Round
-                )
-            }
-        }
-
-        if (active) {
-            Canvas(
-                modifier = Modifier
-                    .size(205.dp)
-                    .graphicsLayer {
-                        alpha = 0.9f
-                    }
-            ) {
+            // Rotating outer intelligence ring.
+            
                 drawCircle(
-                    brush = Brush.radialGradient(
-                        colors = listOf(
-                            palette.orbGlow.copy(alpha = 0.30f),
-                            palette.secondary.copy(alpha = 0.12f),
-                            Color.Transparent
-                        )
-                    )
-                )
-            }
-        }
-
-        Box(
-            modifier = Modifier
-                .size(178.dp)
-                .shadow(
-                    elevation = if (active) 28.dp else 14.dp,
-                    shape = CircleShape,
-                    ambientColor = palette.primary,
-                    spotColor = palette.primary
-                )
-                .clip(CircleShape)
-                .background(
-                    Brush.radialGradient(
-                        colors = listOf(
-                            palette.surface2,
-                            palette.surface,
-                            palette.background
-                        )
-                    )
-                )
-                .border(
-                    width = 2.dp,
-                    brush = Brush.linearGradient(
-                        colors = listOf(
-                            palette.primary,
-                            palette.secondary,
-                            palette.border,
-                            palette.primary
-                        )
+                    color = palette.border.copy(
+                        alpha = if (running) 0.75f else 0.35f
                     ),
-                    shape = CircleShape
-                ),
-            contentAlignment = Alignment.Center
-        ) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Text(
-                    text = "J",
-                    fontSize = 56.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    color = palette.text
+                    radius = outer,
+                    center = center,
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(
+                        width = 1.5f
+                    )
                 )
 
-                Text(
-                    text = "INTELLIGENCE",
-                    fontSize = 8.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 2.4.sp,
-                    color = palette.primary
+                for (i in 0 until 48) {
+                    val angle = Math.toRadians(i * 7.5)
+                    val longTick = i % 4 == 0
+
+                    val r1 = outer - if (longTick) 13f else 7f
+                    val r2 = outer
+
+                    val p1 = Offset(
+                        center.x + cos(angle).toFloat() * r1,
+                        center.y + sin(angle).toFloat() * r1
+                    )
+
+                    val p2 = Offset(
+                        center.x + cos(angle).toFloat() * r2,
+                        center.y + sin(angle).toFloat() * r2
+                    )
+
+                    drawLine(
+                        color = if (longTick) {
+                            stateColor.copy(
+                                alpha = if (active) 0.85f else 0.42f
+                            )
+                        } else {
+                            palette.border.copy(alpha = 0.42f)
+                        },
+                        start = p1,
+                        end = p2,
+                        strokeWidth = if (longTick) 2.5f else 1.2f,
+                        cap = StrokeCap.Round
+                    )
+                }
+
+            // State-reactive inner orbit.
+            
+                drawArc(
+                    color = stateColor.copy(alpha = 0.9f),
+                    startAngle = -35f,
+                    sweepAngle = if (thinking) 285f else 220f,
+                    useCenter = false,
+                    topLeft = Offset(
+                        center.x - outer * 0.72f,
+                        center.y - outer * 0.72f
+                    ),
+                    size = androidx.compose.ui.geometry.Size(
+                        outer * 1.44f,
+                        outer * 1.44f
+                    ),
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(
+                        width = 3.5f,
+                        cap = StrokeCap.Round
+                    )
                 )
-            }
+
+            // Core glow.
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(
+                        Color.White.copy(alpha = 0.95f),
+                        stateColor.copy(alpha = 0.95f),
+                        stateColor.copy(alpha = 0.35f),
+                        Color.Transparent
+                    ),
+                    center = center,
+                    radius = base * 2.8f
+                ),
+                radius = base * 2.8f,
+                center = center
+            )
+
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(
+                        palette.surface2,
+                        palette.surface
+                    )
+                ),
+                radius = base,
+                center = center
+            )
+
+            drawCircle(
+                color = stateColor.copy(alpha = 0.85f),
+                radius = base,
+                center = center,
+                style = androidx.compose.ui.graphics.drawscope.Stroke(
+                    width = 2.5f
+                )
+            )
         }
+
+        Text(
+            text = "J",
+            fontSize = 42.sp,
+            fontWeight = FontWeight.ExtraBold,
+            color = palette.text
+        )
+
+        Text(
+            text = when {
+                thinking -> "THINK"
+                speaking -> "VOICE"
+                listening -> "LISTEN"
+                running -> "READY"
+                else -> "OFF"
+            },
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 26.dp),
+            fontSize = 8.sp,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 2.sp,
+            color = stateColor
+        )
     }
 }
-
 
 @Composable
 private fun PremiumMicButton(
