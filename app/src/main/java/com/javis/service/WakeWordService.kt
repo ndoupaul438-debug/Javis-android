@@ -36,6 +36,7 @@ import com.javis.ai.GroqBackend
 import com.javis.ai.LLMPIBackend
 import com.javis.ai.MockBackend
 import com.javis.assistant.JavisAssistantEngine
+import com.javis.voice.JavisVoiceController
 import com.javis.assistant.AssistantOutcome
 import com.javis.data.ApiKeyStore
 import java.util.Locale
@@ -67,6 +68,7 @@ class WakeWordService : Service() {
     private var audioFocusHeld = false
 
     private lateinit var engine: JavisAssistantEngine
+    private var orbVoiceController: JavisVoiceController? = null
 
 
     override fun onCreate() {
@@ -120,6 +122,12 @@ class WakeWordService : Service() {
             }
         }
 
+        orbVoiceController = JavisVoiceController(this).apply {
+            onTextRecognized = { text ->
+                handleCommand(text)
+            }
+        }
+
         engine = JavisAssistantEngine(
             applicationContext,
             pickBackend()
@@ -167,6 +175,8 @@ class WakeWordService : Service() {
         commandRecognizer?.cancel()
         commandRecognizer?.destroy()
         commandRecognizer = null
+        orbVoiceController?.destroy()
+        orbVoiceController = null
 
         tts?.stop()
         tts?.shutdown()
@@ -187,19 +197,31 @@ class WakeWordService : Service() {
         val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         orbWindowManager = wm
 
-        val size = (30 * resources.displayMetrics.density).toInt()
+        val density = resources.displayMetrics.density
+        val size = (44 * density).toInt()
+        val prefs = getSharedPreferences("javis_orb", Context.MODE_PRIVATE)
 
         val orb = View(this).apply {
             background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
-                setColor(Color.rgb(20, 35, 55))
+                setColor(Color.rgb(12, 24, 42))
                 setStroke(
-                    (2 * resources.displayMetrics.density).toInt(),
+                    (2 * density).toInt(),
                     Color.rgb(47, 216, 255)
                 )
             }
-            elevation = 14f
+            elevation = 18f
+            contentDescription = "JAVIS floating orb"
         }
+
+        val screenWidth = resources.displayMetrics.widthPixels
+        val screenHeight = resources.displayMetrics.heightPixels
+
+        val defaultX = (8 * density).toInt()
+        val defaultY = (18 * density).toInt()
+
+        val savedX = prefs.getInt("orb_x", defaultX)
+        val savedY = prefs.getInt("orb_y", defaultY)
 
         val params = WindowManager.LayoutParams(
             size,
@@ -214,8 +236,92 @@ class WakeWordService : Service() {
             android.graphics.PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = (8 * resources.displayMetrics.density).toInt()
-            y = (12 * resources.displayMetrics.density).toInt()
+            x = savedX.coerceIn(0, (screenWidth - size).coerceAtLeast(0))
+            y = savedY.coerceIn(0, (screenHeight - size).coerceAtLeast(0))
+        }
+
+        var downX = 0f
+        var downY = 0f
+        var startX = 0
+        var startY = 0
+        var moved = false
+
+        orb.setOnTouchListener { view, event ->
+            when (event.actionMasked) {
+                android.view.MotionEvent.ACTION_DOWN -> {
+                    downX = event.rawX
+                    downY = event.rawY
+                    startX = params.x
+                    startY = params.y
+                    moved = false
+                    true
+                }
+
+                android.view.MotionEvent.ACTION_MOVE -> {
+                    val dx = (event.rawX - downX).toInt()
+                    val dy = (event.rawY - downY).toInt()
+
+                    if (kotlin.math.abs(dx) > 6 || kotlin.math.abs(dy) > 6) {
+                        moved = true
+                    }
+
+                    params.x = (startX + dx).coerceIn(
+                        0,
+                        (screenWidth - size).coerceAtLeast(0)
+                    )
+
+                    params.y = (startY + dy).coerceIn(
+                        0,
+                        (screenHeight - size).coerceAtLeast(0)
+                    )
+
+                    try {
+                        wm.updateViewLayout(view, params)
+                    } catch (_: Exception) {
+                    }
+
+                    true
+                }
+
+                android.view.MotionEvent.ACTION_UP -> {
+                    if (!moved) {
+                        toggleListeningFromOrb()
+                    } else {
+                        val maxX = (screenWidth - size).coerceAtLeast(0)
+                        val targetX = if (params.x < maxX / 2) 0 else maxX
+
+                        val animator = android.animation.ValueAnimator.ofInt(
+                            params.x,
+                            targetX
+                        ).apply {
+                            duration = 180L
+                            addUpdateListener {
+                                params.x = it.animatedValue as Int
+                                try {
+                                    wm.updateViewLayout(view, params)
+                                } catch (_: Exception) {
+                                }
+                            }
+                        }
+
+                        animator.start()
+                        params.x = targetX
+                    }
+
+                    prefs.edit()
+                        .putInt("orb_x", params.x)
+                        .putInt("orb_y", params.y)
+                        .apply()
+
+                    true
+                }
+
+                android.view.MotionEvent.ACTION_CANCEL -> {
+                    true
+                }
+
+                else -> true
+            }
         }
 
         try {
@@ -245,6 +351,35 @@ class WakeWordService : Service() {
         }
     }
 
+    private fun toggleListeningFromOrb() {
+        if (!running) return
+
+        if (conversationMode) {
+            endConversation()
+            return
+        }
+
+        if (processingCommand || recognitionActive) {
+            return
+        }
+
+        cancelWakeRestartCallbacks()
+        wakeRecognizer?.cancel()
+        recognitionActive = false
+
+        conversationMode = true
+        processingCommand = false
+        silenceRetries = 0
+
+        WakeWordServiceState.setStatus(
+            ListeningStatus.LISTENING_FOR_COMMAND
+        )
+
+        updateNotification("JAVIS orb is listening...")
+
+        orbVoiceController?.start()
+    }
+
     private fun hideJavisOrb() {
         orbAnimator?.cancel()
         orbAnimator = null
@@ -259,7 +394,6 @@ class WakeWordService : Service() {
         orbView = null
         orbWindowManager = null
     }
-
 
     private fun requestVoiceAudioFocus() {
         val manager = audioManager ?: return
@@ -561,6 +695,7 @@ class WakeWordService : Service() {
         cancelConversationCallbacks()
 
         commandRecognizer?.cancel()
+        orbVoiceController?.stop()
 
         WakeWordServiceState.setStatus(
             ListeningStatus.LISTENING_FOR_WAKE
@@ -783,8 +918,20 @@ class WakeWordService : Service() {
                     outcome.displayText.isNotBlank()
                 ) {
                     speakText(outcome.displayText)
+
+                    if (conversationMode) {
+                        mainHandler.postDelayed({
+                            if (running && conversationMode && !processingCommand) {
+                                orbVoiceController?.start()
+                            }
+                        }, 650L)
+                    }
                 } else if (conversationMode) {
-                    scheduleConversationRetry(150)
+                    mainHandler.postDelayed({
+                        if (running && conversationMode && !processingCommand) {
+                            orbVoiceController?.start()
+                        }
+                    }, 150L)
                 } else {
                     scheduleWakeRestart(150)
                 }
